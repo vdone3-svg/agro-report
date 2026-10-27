@@ -1,0 +1,56 @@
+name: Daily Dashboard Update
+
+on:
+  schedule:
+    - cron: '0 9 * * *'
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python deps
+        run: pip install -r requirements.txt
+
+      - name: Install rclone
+        run: |
+          curl https://rclone.org/install.sh | sudo bash
+          rclone --version
+
+      - name: Configure rclone
+        run: |
+          mkdir -p ~/.config/rclone
+          echo "${{ secrets.RCLONE_CONF }}" > ~/.config/rclone/rclone.conf
+
+      - name: Download xlsx files from OneDrive
+        run: |
+          mkdir -p data_files
+          TODAY=$(date +%d.%m)
+          FOLDER="onedrive:2026_2/${TODAY}"
+          echo "Завантажую з: $FOLDER"
+          rclone copy "$FOLDER" data_files/ --include "*.xlsx" -v || true
+          rclone copy "onedrive:2026_2/" data_files/ --include "*.xlsx" --max-depth 1 -v || true
+          ls -la data_files/
+
+      - name: Parse data
+        run: python3 fetch_and_parse.py
+
+      - name: Build HTML
+        run: python3 build_html.py
+
+      - name: Deploy to Netlify
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+        run: |
+          npm install -g netlify-cli
+          netlify deploy --prod --dir=. --site=$NETLIFY_SITE_ID --auth=$NETLIFY_AUTH_TOKEN
