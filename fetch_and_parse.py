@@ -27,11 +27,13 @@ ONEDRIVE_BASE = "onedrive:Долинское ОТЧЕТЫ/2026_2"
 LOCAL_DIR = Path("./data_files")  # куди завантажувати
 
 # Назви файлів (шукаємо без урахування регістру)
+# Кожне слово зі списку має бути в назві файлу (без урахування регістру).
+# «облік» сам по собі не годиться — є ще журнал обліку коштів.
 FILE_PATTERNS = {
-    "fuel":     "паливо",
-    "worktime": "облік",
-    "harvest":  "косіння",
-    "seeding":  "посівна",
+    "fuel":     ["паливо"],
+    "worktime": ["облік", "час"],
+    "harvest":  ["косіння"],
+    "seeding":  ["посівна"],
 }
 
 # Прив'язка колонок паливного файлу (рядок 3 = заголовки машин)
@@ -152,12 +154,13 @@ def download_files(date_str: str | None = None) -> Path | None:
     return local_path
 
 
-def find_file(local_dir: Path, keyword: str) -> Path | None:
+def find_file(local_dir: Path, keyword) -> Path | None:
     """Шукає файл по ключовому слову (без урахування регістру)."""
     cands = []
     for f in sorted(local_dir.iterdir()):
         n = f.name.lower()
-        if f.suffix.lower() != ".xlsx" or keyword.lower() not in n:
+        words = [keyword] if isinstance(keyword, str) else keyword
+        if f.suffix.lower() != ".xlsx" or not all(w.lower() in n for w in words):
             continue
         if n.startswith("~$") or "копи" in n or "copy" in n:
             continue  # тимчасові файли Excel / копії
@@ -762,6 +765,7 @@ def main():
 
     # Парсимо
     data = {
+        "source_files": {k: v.name for k, v in files.items()},
         "generated_at": datetime.datetime.now().isoformat(),
         "data_date": "",  # заповнюється нижче — остання дата з даними (ISO)
     }

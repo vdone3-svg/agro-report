@@ -50,7 +50,7 @@ jobs:
           checks = {
               "паливо (заправки)": len(f.get("monthly", {})),
               "баланс палива": len(f.get("balance_history", [])),
-              "облік робіт": len(w.get("records", [])),
+              "облік робіт": len(w.get("records", [])) if len(w.get("records", [])) >= 50 else 0,
               "косіння (записи)": len(h.get("records", [])),
               "довідник полів": len(h.get("fields", [])),
           }
@@ -66,7 +66,8 @@ jobs:
           print(f"::notice title=Звіт::папка {folder}; дані на {d['data_date']}; ДП за місяць {dp:.0f} л; "
                 f"залишок ДП {bal:.0f} л; соняшник {t.get('sunflower_kg',0)/1000:.1f} т / {t.get('sunflower_ha',0):.0f} га; "
                 f"кукурудза {t.get('corn_kg',0)/1000:.1f} т / {t.get('corn_ha',0):.0f} га; "
-                f"пшениця {t.get('wheat_kg',0)/1000:.1f} т; записів робіт {checks['облік робіт']}; полів {checks['довідник полів']}")
+                f"пшениця {t.get('wheat_kg',0)/1000:.1f} т; записів робіт {checks['облік робіт']}; полів {checks['довідник полів']}; "
+                f"файли: {d.get('source_files')}; у папці: {sorted(os.path.basename(x) for x in glob.glob('data_files/*/*'))}")
           bad = [k for k, v in checks.items() if not v]
           assert not bad, f"Порожні блоки: {bad}"
           PY
