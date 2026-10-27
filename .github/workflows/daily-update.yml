@@ -63,10 +63,13 @@ jobs:
           dp = sum(v for k, ds in f.get("monthly", {}).items() if k not in pet for dd, v in ds.items() if dd.startswith(m))
           bal = (f.get("balance") or {}).get("display_dp") or 0
           t = h.get("totals", {})
+          mm = __import__('re').search(r'"crop_plan": (\{[^}]*\})', open('index.html', encoding='utf-8').read())
+          plan = mm.group(1) if mm else '—'
           print(f"::notice title=Звіт::папка {folder}; дані на {d['data_date']}; ДП за місяць {dp:.0f} л; "
                 f"залишок ДП {bal:.0f} л; соняшник {t.get('sunflower_kg',0)/1000:.1f} т / {t.get('sunflower_ha',0):.0f} га; "
                 f"кукурудза {t.get('corn_kg',0)/1000:.1f} т / {t.get('corn_ha',0):.0f} га; "
                 f"пшениця {t.get('wheat_kg',0)/1000:.1f} т; записів робіт {checks['облік робіт']}; полів {checks['довідник полів']}; "
+                f"план: {plan}; "
                 f"файли: {d.get('source_files')}; у папці: {sorted(os.path.basename(x) for x in glob.glob('data_files/*/*'))}")
           bad = [k for k, v in checks.items() if not v]
           assert not bad, f"Порожні блоки: {bad}"

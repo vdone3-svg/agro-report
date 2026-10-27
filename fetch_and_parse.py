@@ -165,6 +165,11 @@ def find_file(local_dir: Path, keyword) -> Path | None:
         if n.startswith("~$") or "копи" in n or "copy" in n:
             continue  # тимчасові файли Excel / копії
         cands.append(f)
+    # Кілька файлів (напр. «посівна 2025» і «посівна 2026») — беремо з найбільшим роком
+    def _year(f):
+        ys = re.findall(r"20\d\d", f.name)
+        return max(int(y) for y in ys) if ys else 0
+    cands.sort(key=lambda f: -_year(f))
     return cands[0] if cands else None
 
 
