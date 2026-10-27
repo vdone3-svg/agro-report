@@ -55,6 +55,18 @@ jobs:
               "довідник полів": len(h.get("fields", [])),
           }
           print("data_date:", d.get("data_date"), checks)
+          # Короткий підсумок у анотації запуску (видно в GitHub без логів)
+          import glob, os
+          folder = ",".join(sorted(os.path.basename(p) for p in glob.glob("data_files/*")))
+          m = d["data_date"][:7]
+          pet = set(f.get("petrol_machines", []))
+          dp = sum(v for k, ds in f.get("monthly", {}).items() if k not in pet for dd, v in ds.items() if dd.startswith(m))
+          bal = (f.get("balance") or {}).get("display_dp") or 0
+          t = h.get("totals", {})
+          print(f"::notice title=Звіт::папка {folder}; дані на {d['data_date']}; ДП за місяць {dp:.0f} л; "
+                f"залишок ДП {bal:.0f} л; соняшник {t.get('sunflower_kg',0)/1000:.1f} т / {t.get('sunflower_ha',0):.0f} га; "
+                f"кукурудза {t.get('corn_kg',0)/1000:.1f} т / {t.get('corn_ha',0):.0f} га; "
+                f"пшениця {t.get('wheat_kg',0)/1000:.1f} т; записів робіт {checks['облік робіт']}; полів {checks['довідник полів']}")
           bad = [k for k, v in checks.items() if not v]
           assert not bad, f"Порожні блоки: {bad}"
           PY
