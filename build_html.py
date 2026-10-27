@@ -41,7 +41,7 @@ def build_html(data: dict) -> str:
     fuel_monthly = fuel.get("monthly", {})
     total_dp_month = 0
     for machine, dates in fuel_monthly.items():
-        if machine not in ("ГАЗОН", "Ніва", "Газон (треповка)", "Помпа"):
+        if machine not in set(fuel.get("petrol_machines", [])):
             total_dp_month += sum(v for v in dates.values() if v)
 
     # ── Щоденні роботи ──────────────────────────────────────────
@@ -112,6 +112,7 @@ def build_html(data: dict) -> str:
             "date": bal_date,
         },
         "balance_history": fuel.get("balance_history", []),
+        "petrol_machines": fuel.get("petrol_machines", []),
         "fuel_monthly_total": round(total_dp_month),
         "fuel_by_machine": {
             m: round(sum(v for v in d.values() if v))
@@ -162,8 +163,12 @@ def build_html(data: dict) -> str:
             "monthly": {
                 m: {k: round(v) for k, v in vals.items()}
                 for m, vals in sorted(monthly_harvest.items())
-                if m >= "2026-09"
             },
+            "fields": harvest.get("fields", []),
+            "field_plan": [
+                {"field": str(x.get("field", "")).strip(), "ha": x.get("ha"), "crop": x.get("crop", "")}
+                for x in seeding.get("plan", [])
+            ],
             "records": [
                 {
                     "date": r.get("date", ""),
@@ -175,7 +180,7 @@ def build_html(data: dict) -> str:
                     "waste_sun_kg": r.get("waste_sun_kg", 0) or 0,
                 }
                 for r in hrecs
-                if (r.get("date") or "") >= "2026-09-01"
+                if (r.get("date") or "") >= "2026-01-01"
             ],
         },
     }, ensure_ascii=False)
@@ -490,6 +495,7 @@ tr:last-child td{{border-bottom:none;}}tr:hover td{{background:var(--bg3);}}
         <table id="harvestByFieldTable">
           <thead><tr>
             <th>Поле</th>
+            <th class="num">Площа, га</th>
             <th>Культура</th>
             <th class="num">Зібрано, га</th>
             <th class="num">Зібрано, т</th>
@@ -544,6 +550,13 @@ const BENCHMARK = [
   {{ icon:"🌽", name:"Кукурудза", us:25.3, obl:39.9, ua:58.8, color:"var(--green)" }},
   {{ icon:"🌾", name:"Пшениця",   us:33.1, obl:45.1, ua:49.5, color:"var(--accent)" }},
 ];
+// «Наше господарство» — рахуємо з фактичних даних косіння (кг ÷ га), а не вручну
+(function() {{
+  const h = DATA.harvest || {{}};
+  const y = (kg, ha) => (ha > 0 && kg > 0) ? +(kg / ha / 100).toFixed(1) : null;
+  const ours = {{ "Соняшник": y(h.sun_kg, h.sun_ha), "Кукурудза": y(h.corn_kg, h.corn_ha), "Пшениця": y(h.wht_kg, h.wht_ha) }};
+  BENCHMARK.forEach(r => {{ if (ours[r.name]) r.us = ours[r.name]; }});
+}})();
 
 // ─── ТЕМА ─────────────────────────────────────────────────────────────────────
 function toggleTheme() {{
@@ -668,7 +681,9 @@ function selectDate(iso) {{
 function renderDateSection(iso) {{
   // ── Таблиця робіт ──────────────────────────────────────────────────────────
   const recs = (DATA.all_work_records || []).filter(r => r.date === iso);
-  const totalHa = recs.reduce((s,r) => s + (r.ha||0), 0);
+  // Га на полі: тільки записи з технікою, без перевезення (інакше га комбайна рахуються двічі)
+  const totalHa = recs.filter(r => r.machine && !/перевез/i.test(r.work_type||""))
+                      .reduce((s,r) => s + (r.ha||0), 0);
   document.getElementById("workDateLabel").textContent = iso;
   document.getElementById("workHaTotal").textContent = totalHa > 0 ? `Всього: ${{fmtN(totalHa,1)}} га` : "";
   const sorted = [...recs].sort((a,b) => {{
@@ -713,7 +728,7 @@ function renderDateSection(iso) {{
   for (const [machine, dates] of Object.entries(fuelMonthly)) {{
     if (dates[iso]) fuelToday[machine] = dates[iso];
   }}
-  const GASOLINE_MACHINES = ["ГАЗОН","Ніва","Газон (треповка)","Помпа","Газон (дізель)"];
+  const GASOLINE_MACHINES = DATA.petrol_machines || [];
   const isDiesel = k => !GASOLINE_MACHINES.includes(k);
   const isPetrol = k => GASOLINE_MACHINES.includes(k);
 
@@ -750,7 +765,7 @@ function renderDateSection(iso) {{
   if (balEl) {{
     balEl.innerHTML = `
       <div class="balance-item">
-        <div class="balance-label">Залишок ДП (${{balDate}})</div>
+        <div class="balance-label">Залишок ДП${{balRec && !balRec.fact_dp ? " (теор.)" : ""}} на ${{balDate}}</div>
         <div class="balance-val diesel">${{fmtN(balDp)}}<span style="font-size:13px;font-weight:400;color:var(--fg2);margin-left:4px">л</span></div>
       </div>
       <div class="balance-item">
@@ -759,7 +774,7 @@ function renderDateSection(iso) {{
           ${{totalDpDay > 0 ? `<span style="font-size:11px;color:var(--accent);margin-left:6px">+${{fmtN(totalDpDay)}}л сьогодні</span>` : ''}}</div>
       </div>
       ${{balBen > 0 ? `<div class="balance-item">
-        <div class="balance-label">Залишок бензину (${{balDate}})</div>
+        <div class="balance-label">Залишок бензину${{balRec && !balRec.fact_ben ? " (теор.)" : ""}} на ${{balDate}}</div>
         <div class="balance-val petrol">${{fmtN(balBen)}}<span style="font-size:13px;font-weight:400;color:var(--fg2);margin-left:4px">л</span></div>
       </div>` : ''}}
       ${{totalBenCum > 0 ? `<div class="balance-item">
@@ -830,36 +845,64 @@ function renderDateSection(iso) {{
   // ── Хід збирання по полях ───────────────────────────────────────────────────
   const hFieldBody = document.getElementById("harvestByFieldBody");
   if (hFieldBody) {{
-    // Агрегуємо по полях з усіх записів (наростаючий — всі дати до iso включно)
-    const byField = {{}};
-    for (const r of hAllRecs.filter(r => r.date <= iso)) {{
-      const f = r.field || "—";
-      // Визначаємо культуру по тому, що більше
-      let crop = null, cropKg = 0;
-      if ((r.sun_kg||0) > cropKg)  {{ crop = "Соняшник"; cropKg = r.sun_kg||0; }}
-      if ((r.corn_kg||0) > cropKg) {{ crop = "Кукурудза"; cropKg = r.corn_kg||0; }}
-      if ((r.wht_kg||0) > cropKg)  {{ crop = "Пшениця";  cropKg = r.wht_kg||0; }}
-      if (!crop) continue;
-      const key = f + "||" + crop;
-      if (!byField[key]) byField[key] = {{ field: f, crop, ha: 0, kg: 0 }};
-      byField[key].ha += r.ha || 0;
-      byField[key].kg += cropKg;
+    // Усі поля з довідника (навіть де ще 0) + площа; культура — з плану посівної,
+    // для змішаних полів («пшениця 94 га, кукурудза 25 га») — окремий рядок на культуру.
+    const norm = v => String(v ?? "").trim().toLowerCase();
+    const cropNorm = c => {{ c = norm(c);
+      if (c.startsWith("пшен")) return "Пшениця"; if (c.startsWith("кукур")) return "Кукурудза";
+      if (c.startsWith("сонях") || c.startsWith("соняш")) return "Соняшник"; return null; }};
+    const planByField = {{}};
+    for (const p of ((DATA.harvest && DATA.harvest.field_plan) || [])) {{
+      const parts = [...String(p.crop||"").matchAll(/([А-Яа-яІіЇїЄєҐґ']+)\\s*(\\d+(?:[.,]\\d+)?)\\s*га/g)];
+      planByField[norm(p.field)] = parts.length
+        ? parts.map(m => ({{ crop: cropNorm(m[1]), area: parseFloat(m[2].replace(",", ".")) }})).filter(x => x.crop)
+        : (cropNorm(p.crop) ? [{{ crop: cropNorm(p.crop), area: null }}] : []);
     }}
-    const rows = Object.values(byField).sort((a,b) => a.field.localeCompare(b.field, "uk"));
+    // Фактично зібране по (поле, культура) до обраної дати
+    const done = {{}};
+    for (const r of hAllRecs.filter(r => r.date <= iso)) {{
+      let crop = null, kg = 0;
+      if ((r.sun_kg||0) > kg)  {{ crop = "Соняшник";  kg = r.sun_kg; }}
+      if ((r.corn_kg||0) > kg) {{ crop = "Кукурудза"; kg = r.corn_kg; }}
+      if ((r.wht_kg||0) > kg)  {{ crop = "Пшениця";   kg = r.wht_kg; }}
+      if (!crop) continue;
+      const k = norm(r.field) + "||" + crop;
+      if (!done[k]) done[k] = {{ field: String(r.field), crop, ha: 0, kg: 0 }};
+      done[k].ha += r.ha || 0; done[k].kg += kg;
+    }}
+    const rows = [];
+    const used = new Set();
+    for (const f of ((DATA.harvest && DATA.harvest.fields) || [])) {{
+      const key = norm(f.field);
+      let crops = planByField[key] || [];
+      // культур з плану нема — беремо з фактичного збирання
+      if (!crops.length) crops = Object.values(done).filter(d => norm(d.field) === key).map(d => ({{ crop: d.crop, area: null }}));
+      if (!crops.length) crops = [{{ crop: null, area: null }}];
+      for (const c of crops) {{
+        const d = c.crop ? done[key + "||" + c.crop] : null;
+        if (d) used.add(key + "||" + c.crop);
+        rows.push({{ field: f.field, area: c.area != null ? c.area : f.area_ha, crop: c.crop, ha: d ? d.ha : 0, kg: d ? d.kg : 0 }});
+      }}
+    }}
+    // Поля, яких нема в довіднику, але є у збиранні
+    for (const [k, d] of Object.entries(done)) if (!used.has(k)) rows.push({{ field: d.field, area: null, crop: d.crop, ha: d.ha, kg: d.kg }});
+    rows.sort((a,b) => a.field.localeCompare(b.field, "uk", {{numeric:true}}));
     if (rows.length === 0) {{
-      hFieldBody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--fg3);padding:16px">Немає даних</td></tr>`;
+      hFieldBody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--fg3);padding:16px">Немає даних</td></tr>`;
     }} else {{
       const cropColor = {{ "Соняшник": "var(--yellow)", "Кукурудза": "var(--green)", "Пшениця": "var(--accent)" }};
       hFieldBody.innerHTML = rows.map(r => {{
-        const t = r.kg / 1000;
-        const yld = r.ha > 0 ? (r.kg / r.ha / 100) : 0; // ц/га
-        const col = cropColor[r.crop] || "var(--fg)";
-        return `<tr>
+        const yld = r.ha > 0 ? (r.kg / r.ha / 100) : 0;
+        const col = cropColor[r.crop] || "var(--fg2)";
+        const pct = r.area > 0 ? Math.min(100, Math.round(r.ha / r.area * 100)) : null;
+        const dim = r.ha > 0 ? "" : "opacity:.6";
+        return `<tr style="${{dim}}">
           <td style="font-weight:500">${{r.field}}</td>
-          <td style="color:${{col}}">${{r.crop}}</td>
-          <td class="num">${{fmtN(r.ha,1)}}</td>
-          <td class="num">${{fmtN(t,1)}} т</td>
-          <td class="num" style="font-weight:600;color:${{col}}">${{yld.toFixed(1)}} ц/га</td>
+          <td class="num">${{r.area != null && r.area > 0 ? fmtN(r.area,0) : "—"}}</td>
+          <td style="color:${{col}}">${{r.crop || "—"}}</td>
+          <td class="num">${{fmtN(r.ha,0)}}${{pct != null ? `<span style="color:var(--fg2);font-size:11px"> (${{pct}}%)</span>` : ""}}</td>
+          <td class="num">${{fmtN(r.kg/1000,1)}} т</td>
+          <td class="num" style="font-weight:600;color:${{col}}">${{r.ha > 0 ? yld.toFixed(1) + " ц/га" : "—"}}</td>
         </tr>`;
       }}).join("");
     }}
@@ -910,14 +953,16 @@ function renderDateSection(iso) {{
     }} else {{
       let html = "";
       for (const item of lhaItems) {{
+        const lowFlag = item.avgLha && item.avgLha < 3;
         const avgColor = item.avgLha && item.avgLha > 25 ? "color:var(--red);font-weight:700"
-                       : item.avgLha && item.avgLha < 5  ? "color:var(--green)" : "";
+                       : lowFlag ? "color:var(--yellow)" : "";
         html += `<div class="lha-block">
           <div class="lha-header">
             <span class="lha-machine">${{item.machine}}</span>
             <span class="lha-total">${{fmtN(item.totalFuel)}} л / ${{fmtN(item.totalHa,1)}} га</span>
             <span class="lha-avg" style="${{avgColor}}">${{item.avgLha ? item.avgLha.toFixed(2) : "—"}} л/га</span>
-          </div>`;
+          </div>
+          ${{lowFlag ? `<div style="font-size:11px;color:var(--yellow);margin-top:6px">⚠ Заправок замало для такого обсягу робіт — ймовірно, частину палива записано на іншу техніку</div>` : ""}}`;
         if (item.byWork.length > 1) {{
           html += `<table><thead><tr>
             <th>Вид роботи</th>
@@ -991,7 +1036,7 @@ function render() {{
 
   // Дата header
   const runDate = new Date().toLocaleDateString("uk-UA", {{day:"numeric",month:"long",year:"numeric"}});
-  const dataLabel = new Date(d.data_date).toLocaleDateString("uk-UA", {{day:"numeric",month:"long"}});
+  const dataLabel = new Date(d.data_date + "T00:00:00").toLocaleDateString("uk-UA", {{day:"numeric",month:"long"}});
   document.getElementById("reportDateLabel").innerHTML =
     `Звіт від <b>${{runDate}}</b> <span style="color:var(--fg2);">(дані на ${{dataLabel}})</span>`;
   // Ставимо початкову дату у кнопці
@@ -1011,7 +1056,7 @@ function render() {{
   const h = d.harvest || {{}};
   const monthly = h.monthly || {{}};
   const stock = h.stock || {{}};
-  const months = Object.keys(monthly).sort().filter(m => m >= "2026-09");
+  const months = Object.keys(monthly).sort();
   const MONTH_UA = {{"01":"Січ","02":"Лют","03":"Бер","04":"Квіт","05":"Трав","06":"Черв",
                      "07":"Лип","08":"Серп","09":"Вер","10":"Жовт","11":"Лист","12":"Груд"}};
   const hmEl = document.getElementById("harvestMonthly");

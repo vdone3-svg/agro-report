@@ -165,7 +165,7 @@ def parse_fuel(filepath: Path) -> dict:
       - balance_history: [{date, theor_dp}] — всі рядки для динамічного залишку
     """
     wb = load_workbook(filepath, read_only=True, data_only=True)
-    result = {"monthly": {}, "balance": {}, "balance_history": []}
+    result = {"monthly": {}, "balance": {}, "balance_history": [], "petrol_machines": set()}
 
     SKIP_SHEETS = ["Архів", "Баланс", "Резервуари", "Довідники"]
     START_DATE = datetime.date(2026, 9, 1)
@@ -176,25 +176,42 @@ def parse_fuel(filepath: Path) -> dict:
             continue
 
         ws = wb[sheet_name]
-        # row3 = заголовки машин (0-based col)
-        machine_cols = {}
-        for i, row in enumerate(ws.iter_rows(min_row=3, max_row=3, values_only=True)):
-            for col_idx, val in enumerate(row):
-                if val and isinstance(val, str):
-                    val_clean = val.strip()
-                    for machine_name in FUEL_MACHINES:
-                        if machine_name in machine_cols:
-                            continue
-                        if val_clean == machine_name or val_clean.startswith(machine_name):
-                            machine_cols[machine_name] = col_idx
-                            break
-                    else:
-                        for machine_name in FUEL_MACHINES:
-                            if machine_name in machine_cols:
-                                continue
-                            if machine_name in val_clean:
-                                machine_cols[machine_name] = col_idx
-                                break
+        # Рядок 2 — групи («ДП» … «Всього ДП» | «БЕНЗИН» … «ВСЬОГО бензин» |
+        # «БЕНЗИН (власні авто)» … «Всього хлопці»), рядок 3 — назви машин.
+        # Колонки визначаємо за групою, а не за назвою: «Різне» є і в ДП, і в бензині,
+        # а «Газон (дізель)» — це дизель, хоч і «Газон».
+        hdr2 = next(ws.iter_rows(min_row=2, max_row=2, values_only=True), ())
+        hdr3 = next(ws.iter_rows(min_row=3, max_row=3, values_only=True), ())
+        groups = []  # [(col_idx, тип)]
+        for ci, v in enumerate(hdr2):
+            s = str(v).strip().lower() if v else ""
+            if s == "дп":
+                groups.append((ci, "dp"))
+            elif s.startswith("бензин (власні"):
+                groups.append((ci, "own"))
+            elif s == "бензин":
+                groups.append((ci, "ben"))
+            elif s.startswith("всього") or s.startswith("весь") or s.startswith("завоз") or s.startswith("щуп"):
+                groups.append((ci, "stop"))
+        groups.sort()
+        machine_cols = {}  # {display_name: (col_idx, type)}
+        for ci, v in enumerate(hdr3):
+            if not v or not isinstance(v, str):
+                continue
+            gtype = None
+            for gci, gt in groups:
+                if gci <= ci:
+                    gtype = gt
+            if gtype not in ("dp", "ben", "own"):
+                continue
+            name = v.strip()
+            if gtype == "ben" and name.lower() == "різне":
+                name = "Різне (бензин)"
+            if gtype == "own":
+                name = f"{name} (авто)"
+            machine_cols[name] = (ci, gtype)
+            if gtype in ("ben", "own"):
+                result["petrol_machines"].add(name)
 
         if not machine_cols:
             continue
@@ -208,7 +225,7 @@ def parse_fuel(filepath: Path) -> dict:
             if rec_date < START_DATE:
                 continue
             date_key = rec_date.isoformat()
-            for machine_name, col_idx in machine_cols.items():
+            for machine_name, (col_idx, _t) in machine_cols.items():
                 if col_idx < len(row):
                     val = row[col_idx]
                     if val and isinstance(val, (int, float)) and val > 0:
@@ -261,6 +278,7 @@ def parse_fuel(filepath: Path) -> dict:
         if balance_history:
             result["balance"] = balance_history[-1]
 
+    result["petrol_machines"] = sorted(result["petrol_machines"])
     wb.close()
     return result
 
@@ -300,15 +318,22 @@ def parse_worktime(filepath: Path) -> dict:
             qty = None
             if raw_qty is not None:
                 try:
-                    qty = float(str(raw_qty).replace("год", "").strip())
+                    qty = float(str(raw_qty).replace("год", "").replace(",", ".").strip())
                 except (TypeError, ValueError):
                     qty = None
+            if qty == 0:
+                qty = None
 
             unit_lower = unit.lower()
             qty_ha = qty if unit_lower == "га" else None
             qty_hrs = qty if "год" in unit_lower else None
 
-            if qty_ha is None and qty_hrs is None:
+            # Рядки без кількості (Вихідний, Обліковець без год тощо) теж показуємо
+            # у таблиці дня — інакше день виглядає як «працював один черговий».
+            if qty_ha is None and qty_hrs is None and not row[2]:
+                continue
+            # «Вихідний» у звіт не потрапляє зовсім
+            if row[2] and str(row[2]).strip().lower().startswith("вихідн"):
                 continue
 
             result["records"].append({
@@ -329,126 +354,140 @@ def parse_worktime(filepath: Path) -> dict:
 
 def parse_harvest(filepath: Path) -> dict:
     """
-    Парсить Косіння_2026.xlsx.
-    Лист '2026': дата | №поля | га | соняшник кг | кукурудза кг | кукурудза доробіток |
-                 пшениця кг | мусор сонях | відп.соняшник | відп.кукурудза | відп.пшениця | відп.мусор |
-                 залишок соняшника | залишок кукурудзи | залишок пшениці | залишок мусор сонях
-    Повертає:
-      - records: [{date, field, ha, sunflower_kg, corn_kg, wheat_kg, waste_sun_kg,
-                   sent_sun, sent_corn, sent_wheat, sent_waste_sun}]  — тільки з вересня
-      - totals: {sunflower_ha, corn_ha, wheat_ha, sunflower_kg, corn_kg, wheat_kg, waste_sun_kg}
-                 з вересня
-      - stock: {sunflower_kg, corn_kg, wheat_kg, waste_sun_kg}  — залишки з останнього рядка
-      - by_month: {"2026-09": {...}, "2026-10": {...}}  — по місяцях (вересень+)
+    Парсить Косіння_2026.xlsx, лист '2026'.
+    Колонки (1-based): 1 дата | 2 поле | 3 га | 4 соняшник кг | 5 кукурудза кг |
+      6 кукурудза на доробіток кг | 7 пшениця кг | 8 мусор сонях кг |
+      9-12 відправка на елеватор | 13-16 залишки по рядку (не наростаючі!) |
+      17-21 довідник полів, а нижче (кол. 17-20) — зведена таблиця власника
+      «На складі зараз (за мінусом вивезеного)»: Культура | Вивезено | Інші витрати | Залишок.
+
+    Правила:
+      - рядок без поля і без га, але з кг культур (13.07 — «давня» пшениця/залишки
+        минулого року) — це не урожай 2026, у records/totals не йде;
+      - кукурудза = кукурудза + кукурудза на доробіток (як у таблиці власника);
+      - залишок на складі беремо з таблиці власника, а не з останнього рядка.
     """
-    HARVEST_START = datetime.date(2026, 9, 1)  # динаміка і totals — з вересня
-    wb = load_workbook(filepath, read_only=True, data_only=True)
-    result = {"records": [], "totals": {}, "stock": {}, "by_month": {}}
+    SEASON_START = datetime.date(2026, 1, 1)
+    wb = load_workbook(filepath, read_only=False, data_only=True)
+    result = {"records": [], "totals": {}, "stock": {}, "by_month": {},
+              "opening_stock": {}, "other_issues": []}
 
-    ws = None
-    for sn in wb.sheetnames:
-        if sn == "2026":
-            ws = wb[sn]
+    ws = wb["2026"] if "2026" in wb.sheetnames else None
+    if ws is None:
+        wb.close()
+        return result
+
+    totals = {k: 0.0 for k in (
+        "sunflower_ha", "corn_ha", "wheat_ha",
+        "sunflower_kg", "corn_kg", "wheat_kg", "waste_sun_kg",
+        "sent_sun", "sent_corn", "sent_wheat", "sent_waste_sun")}
+    by_month = {}
+
+    def num(v):
+        return float(v) if isinstance(v, (int, float)) else 0.0
+
+    for r in range(3, ws.max_row + 1):
+        d = ws.cell(r, 1).value
+        if not isinstance(d, (datetime.datetime, datetime.date)):
+            continue
+        d = d.date() if isinstance(d, datetime.datetime) else d
+        if d < SEASON_START:
+            continue
+        field = ws.cell(r, 2).value
+        ha = num(ws.cell(r, 3).value)
+        sun = num(ws.cell(r, 4).value)
+        corn = num(ws.cell(r, 5).value) + num(ws.cell(r, 6).value)
+        wht = num(ws.cell(r, 7).value)
+        waste = num(ws.cell(r, 8).value)
+        sent = [num(ws.cell(r, c).value) for c in (9, 10, 11, 12)]
+
+        if not ha and field in (None, "") and (sun or corn or wht):
+            # давні залишки на складі, не урожай цього сезону
+            result["opening_stock"] = {"date": d.isoformat(), "sunflower_kg": sun,
+                                       "corn_kg": corn, "wheat_kg": wht, "waste_sun_kg": waste}
+            continue
+        if not (ha or sun or corn or wht or waste or any(sent)):
+            continue
+
+        rec = {
+            "date": d.isoformat(),
+            "field": str(field).strip() if field is not None else "",
+            "ha": ha,
+            "sunflower_kg": sun, "corn_kg": corn, "wheat_kg": wht, "waste_sun_kg": waste,
+            "sent_sun": sent[0], "sent_corn": sent[1], "sent_wheat": sent[2], "sent_waste_sun": sent[3],
+        }
+        result["records"].append(rec)
+
+        crop_ha_key = ("sunflower_ha" if sun else "corn_ha" if corn else "wheat_ha" if wht else None)
+        if ha and crop_ha_key:
+            totals[crop_ha_key] += ha
+        totals["sunflower_kg"] += sun
+        totals["corn_kg"] += corn
+        totals["wheat_kg"] += wht
+        totals["waste_sun_kg"] += waste
+        totals["sent_sun"] += sent[0]
+        totals["sent_corn"] += sent[1]
+        totals["sent_wheat"] += sent[2]
+        totals["sent_waste_sun"] += sent[3]
+
+        mk = d.strftime("%Y-%m")
+        bm = by_month.setdefault(mk, {k: 0.0 for k in (
+            "sunflower_kg", "corn_kg", "wheat_kg", "waste_sun_kg",
+            "sunflower_ha", "corn_ha", "wheat_ha")})
+        bm["sunflower_kg"] += sun
+        bm["corn_kg"] += corn
+        bm["wheat_kg"] += wht
+        bm["waste_sun_kg"] += waste
+        if ha and crop_ha_key:
+            bm[crop_ha_key] += ha
+
+    # ── Довідник полів (кол. 17 «Найменування поля», 19 «Га в обробітку») ────
+    fields = []
+    for r in range(3, min(ws.max_row, 100) + 1):
+        name = ws.cell(r, 17).value
+        if name is None or (isinstance(name, str) and name.strip().lower().startswith("на складі")):
             break
+        area = ws.cell(r, 19).value
+        fields.append({"field": str(name).strip(), "area_ha": num(area)})
+    result["fields"] = fields
 
-    if ws:
-        totals = {
-            "sunflower_ha": 0, "corn_ha": 0, "wheat_ha": 0,
-            "sunflower_kg": 0, "corn_kg": 0, "wheat_kg": 0, "waste_sun_kg": 0,
-            "sent_sun": 0, "sent_corn": 0, "sent_wheat": 0, "sent_waste_sun": 0,
-        }
-        by_month = {}
-        last_stock = None  # зберігаємо залишки з кожного рядка, беремо останній
-
-        for row in ws.iter_rows(min_row=3, values_only=True):
-            date_val = row[0]
-            if not isinstance(date_val, (datetime.datetime, datetime.date)):
+    # ── Таблиця власника «На складі зараз» ──────────────────────────────────
+    stock = {}
+    CROP_KEYS = {"пшениця": "wheat_kg", "соняшник": "sunflower_kg",
+                 "кукурудза": "corn_kg", "мусор": "waste_sun_kg"}
+    anchor = None
+    for r in range(1, min(ws.max_row, 300) + 1):
+        v = ws.cell(r, 17).value
+        if isinstance(v, str) and v.strip().lower().startswith("на складі зараз"):
+            anchor = r
+            break
+    if anchor:
+        for r in range(anchor + 1, anchor + 12):
+            name = ws.cell(r, 17).value
+            if not isinstance(name, str):
                 continue
-            if isinstance(date_val, datetime.datetime):
-                date_val = date_val.date()
+            low = name.strip().lower()
+            if low.startswith("інші видачі"):
+                break
+            for k, key in CROP_KEYS.items():
+                if low.startswith(k):
+                    stock[key] = num(ws.cell(r, 20).value)
+                    stock[key.replace("_kg", "_sent_kg")] = num(ws.cell(r, 18).value)
+                    stock[key.replace("_kg", "_other_kg")] = num(ws.cell(r, 19).value)
+        # Інші видачі зі складу (премії, на посів, під з/п)
+        for r in range(anchor + 1, min(ws.max_row, anchor + 80) + 1):
+            v = ws.cell(r, 17).value
+            if isinstance(v, (datetime.datetime, datetime.date)):
+                result["other_issues"].append({
+                    "date": (v.date() if isinstance(v, datetime.datetime) else v).isoformat(),
+                    "crop": str(ws.cell(r, 18).value or ""),
+                    "kg": num(ws.cell(r, 19).value),
+                    "comment": str(ws.cell(r, 20).value or ""),
+                })
 
-            ha = _safe_float(row[2])
-            sun_kg = _safe_float(row[3])
-            corn_kg = _safe_float(row[4])
-            wheat_kg = _safe_float(row[6])
-            waste_sun_kg = _safe_float(row[7])
-            sent_sun = _safe_float(row[8])
-            sent_corn = _safe_float(row[9])
-            sent_wheat = _safe_float(row[10])
-            sent_waste = _safe_float(row[11])
-
-            # Залишки на складі (cols 12-15) — оновлюємо з кожного рядка що є
-            stock_sun = _safe_float(row[12])
-            stock_corn = _safe_float(row[13])
-            stock_wheat = _safe_float(row[14])
-            stock_waste = _safe_float(row[15])
-            if any(v is not None and v > 0 for v in [stock_sun, stock_corn, stock_wheat, stock_waste]):
-                last_stock = {
-                    "sunflower_kg": stock_sun or 0,
-                    "corn_kg": stock_corn or 0,
-                    "wheat_kg": stock_wheat or 0,
-                    "waste_sun_kg": stock_waste or 0,
-                }
-
-            # Records та totals — тільки з вересня
-            if date_val < HARVEST_START:
-                continue
-
-            rec = {
-                "date": date_val.isoformat(),
-                "field": str(row[1]).strip() if row[1] is not None else "",
-                "ha": ha or 0,
-                "sunflower_kg": sun_kg or 0,
-                "corn_kg": corn_kg or 0,
-                "wheat_kg": wheat_kg or 0,
-                "waste_sun_kg": waste_sun_kg or 0,
-                "sent_sun": sent_sun or 0,
-                "sent_corn": sent_corn or 0,
-                "sent_wheat": sent_wheat or 0,
-                "sent_waste_sun": sent_waste or 0,
-            }
-            result["records"].append(rec)
-
-            # Підсумки з вересня
-            if ha:
-                if sun_kg:
-                    totals["sunflower_ha"] += ha
-                elif corn_kg:
-                    totals["corn_ha"] += ha
-                elif wheat_kg:
-                    totals["wheat_ha"] += ha
-            totals["sunflower_kg"] += sun_kg or 0
-            totals["corn_kg"] += corn_kg or 0
-            totals["wheat_kg"] += wheat_kg or 0
-            totals["waste_sun_kg"] += waste_sun_kg or 0
-            totals["sent_sun"] += sent_sun or 0
-            totals["sent_corn"] += sent_corn or 0
-            totals["sent_wheat"] += sent_wheat or 0
-            totals["sent_waste_sun"] += sent_waste or 0
-
-            # По місяцях
-            month_key = date_val.strftime("%Y-%m")
-            if month_key not in by_month:
-                by_month[month_key] = {
-                    "sunflower_kg": 0, "corn_kg": 0, "wheat_kg": 0, "waste_sun_kg": 0,
-                    "sunflower_ha": 0, "corn_ha": 0, "wheat_ha": 0,
-                }
-            bm = by_month[month_key]
-            bm["sunflower_kg"] += sun_kg or 0
-            bm["corn_kg"] += corn_kg or 0
-            bm["wheat_kg"] += wheat_kg or 0
-            bm["waste_sun_kg"] += waste_sun_kg or 0
-            if ha:
-                if sun_kg:    bm["sunflower_ha"] += ha
-                elif corn_kg: bm["corn_ha"] += ha
-                elif wheat_kg:bm["wheat_ha"] += ha
-
-        result["totals"] = totals
-        result["by_month"] = by_month
-        result["stock"] = last_stock or {
-            "sunflower_kg": 0, "corn_kg": 0, "wheat_kg": 0, "waste_sun_kg": 0
-        }
-
+    result["totals"] = totals
+    result["by_month"] = by_month
+    result["stock"] = stock or {"sunflower_kg": 0, "corn_kg": 0, "wheat_kg": 0, "waste_sun_kg": 0}
     wb.close()
     return result
 
@@ -573,139 +612,97 @@ def _normalize_work_type(work_type: str) -> str:
 
 def calc_lha(fuel_data: dict, worktime_data: dict) -> list[dict]:
     """
-    Розраховує л/га для кожної машини за поточний місяць.
-    Логіка: заправка дати X ÷ га з найближчого дня ≤ X де є записи по цій техніці.
-    Додатково: розбивка по типах робіт (оранка vs дискування тощо).
-    Важливо: для підрахунку л/га за місяць беремо тільки місяці де є заправки.
-    """
-    # Визначаємо місяці в яких є заправки (для кожної машини)
-    fuel_months = {}  # {machine_name: set of "YYYY-MM"}
-    for machine_name, dates in fuel_data.get("monthly", {}).items():
-        fuel_months[machine_name] = {d[:7] for d in dates.keys()}
+    Л/га по техніці (в межах кожного місяця).
 
-    # Будуємо карту га по техніці і типу роботи:
-    # {fuel_key: {date: {work_type: ha, '_total': ha}}}
-    ha_by_machine = {}
+    Метод «від заправки до заправки»: заправка дня X покриває всю роботу машини
+    після попередньої заправки (того ж місяця) і до X включно. Перша заправка
+    місяця покриває роботу з 1-го числа. Так кожен гектар потрапляє рівно в одну
+    заправку — на відміну від старого методу (га лише найближчого дня ≤ X), який
+    губив роботу між заправками і завищував л/га.
+
+    Якщо в інтервалі кілька видів робіт — літри розподіляються пропорційно га.
+    Заправка, після якої (до неї) не було га, переноситься на наступну заправку.
+    Га після останньої заправки місяця ще не «оплачені» паливом і не враховуються.
+
+    daily: [{date (дата заправки), liters, ha, work_type, ha_from, ha_to, lha}]
+    """
+    ha_by_machine = {}  # {fuel_key: {date: {work_type: ha}}}
     for rec in worktime_data["records"]:
         if not rec.get("qty_ha"):
-            continue  # для л/га потрібні тільки га-записи
+            continue
         machine = rec["machine"]
-        date = rec["date"]
-        ha = rec["qty_ha"]
-        work_type = _normalize_work_type(rec.get("work_type", ""))
-
-        # Пропускаємо комбіновані записи (МТЗ-892/Дойц115/КИЙ — три машини в одному)
+        # Комбіновані записи (МТЗ-892/Дойц115/КИЙ — три машини в одному) — не розносимо
         if machine.count("/") >= 2:
             continue
-        # Знаходимо відповідне паливне ім'я
         fuel_key = None
         for fuel_name, patterns in FUEL_LHA_MACHINES.items():
-            for pat in patterns:
-                if pat.upper() in machine.upper():
-                    fuel_key = fuel_name
-                    break
-            if fuel_key:
+            if any(p.upper() in machine.upper() for p in patterns):
+                fuel_key = fuel_name
                 break
         if not fuel_key:
             continue
-
-        # Враховуємо тільки га за місяці де є заправки цієї машини
-        if fuel_key in fuel_months and date[:7] not in fuel_months[fuel_key]:
-            continue
-
-        if fuel_key not in ha_by_machine:
-            ha_by_machine[fuel_key] = {}
-        day = ha_by_machine[fuel_key].setdefault(date, {"_total": 0})
-        day[work_type] = day.get(work_type, 0) + ha
-        day["_total"] += ha
+        wt = _normalize_work_type(rec.get("work_type", ""))
+        day = ha_by_machine.setdefault(fuel_key, {}).setdefault(rec["date"], {})
+        day[wt] = day.get(wt, 0) + rec["qty_ha"]
 
     results = []
     monthly_fuel = fuel_data.get("monthly", {})
-
-    for machine_name, ha_dates in ha_by_machine.items():
+    for machine_name in FUEL_LHA_MACHINES:
         fuel_dates = monthly_fuel.get(machine_name, {})
+        ha_dates = ha_by_machine.get(machine_name, {})
         if not fuel_dates:
             continue
-
-        # total: всі заправки + всі га за місяць (незалежно від пар дата-дата)
-        total_fuel = sum(fuel_dates.values())
-        total_ha = sum(v["_total"] for v in ha_dates.values())
-        _seen_ha_dates = set()  # використовується в daily-циклі для by_work_type
-
-        # Збираємо підсумок по типах робіт за місяць
-        by_work_type = {}  # {work_type: {ha, fuel_l}}
-        all_work_types = set()
-        for day_data in ha_dates.values():
-            for wt, wt_ha in day_data.items():
-                if wt != "_total":
-                    all_work_types.add(wt)
-
-        # Деталі по датах заправки
         daily = []
-        for fuel_date, liters in sorted(fuel_dates.items()):
-            # Знаходимо найближчий день роботи ≤ fuel_date
-            matching_day = None
-            matching_date = None
-            for ha_date in sorted(ha_dates.keys(), reverse=True):
-                if ha_date <= fuel_date:
-                    matching_day = ha_dates[ha_date]
-                    matching_date = ha_date
-                    break
+        months = sorted({d[:7] for d in fuel_dates})
+        for m in months:
+            fills = sorted((d, l) for d, l in fuel_dates.items() if d[:7] == m)
+            prev = m + "-00"  # «до 1-го числа»
+            carry = 0.0
+            for fdate, liters in fills:
+                interval = {d: v for d, v in ha_dates.items() if prev < d <= fdate}
+                by_wt = {}
+                for v in interval.values():
+                    for wt, h in v.items():
+                        by_wt[wt] = by_wt.get(wt, 0) + h
+                total_ha = sum(by_wt.values())
+                lit = liters + carry
+                if total_ha <= 0:
+                    carry = lit  # заправка «наперед» — переносимо
+                    continue
+                carry = 0.0
+                d_from, d_to = min(interval), max(interval)
+                for wt, h in sorted(by_wt.items(), key=lambda x: -x[1]):
+                    part = lit * h / total_ha
+                    daily.append({
+                        "date": fdate, "liters": round(part, 1), "ha": h,
+                        "work_type": wt, "ha_from": d_from, "ha_to": d_to,
+                        "lha": round(part / h, 2),
+                    })
+                prev = fdate
+            if carry > 0:
+                daily.append({"date": fills[-1][0], "liters": round(carry, 1), "ha": 0,
+                              "work_type": "Без га (не розподілено)", "ha_from": None,
+                              "ha_to": None, "lha": None})
 
-            matching_ha = matching_day["_total"] if matching_day else 0
-            # Тип роботи того дня (домінуючий за га, якщо кілька)
-            work_type_day = ""
-            if matching_day:
-                best_wt = max(
-                    ((wt, wt_ha) for wt, wt_ha in matching_day.items() if wt != "_total"),
-                    key=lambda x: x[1], default=("", 0)
-                )
-                work_type_day = best_wt[0]
-                # Накопичуємо по типах
-                for wt, wt_ha in matching_day.items():
-                    if wt == "_total":
-                        continue
-                    if wt not in by_work_type:
-                        by_work_type[wt] = {"ha": 0, "fuel_l": 0}
-                    by_work_type[wt]["ha"] += wt_ha
-                    # Розподіляємо паливо пропорційно га між типами роботи
-                    if matching_ha:
-                        by_work_type[wt]["fuel_l"] += liters * (wt_ha / matching_ha)
-
-            lha = round(liters / matching_ha, 2) if matching_ha else None
-            daily.append({
-                "date": fuel_date,
-                "liters": liters,
-                "ha": matching_ha,
-                "ha_date": matching_date,
-                "work_type": work_type_day,
-                "lha": lha,
-            })
-            # by_work_type — накопичуємо га тільки раз на унікальну дату робіт
-            if matching_date and matching_date not in _seen_ha_dates:
-                _seen_ha_dates.add(matching_date)
-
-        # Підрахунок л/га по типах робіт
-        work_type_summary = []
-        for wt, vals in sorted(by_work_type.items()):
-            wt_ha = vals["ha"]
-            wt_fuel = vals["fuel_l"]
-            work_type_summary.append({
-                "work_type": wt,
-                "ha": round(wt_ha, 1),
-                "fuel_l": round(wt_fuel, 0),
-                "avg_lha": round(wt_fuel / wt_ha, 2) if wt_ha else None,
-            })
-
+        total_fuel = sum(r["liters"] for r in daily)
+        total_ha = sum(r["ha"] for r in daily)
+        by_wt = {}
+        for r in daily:
+            b = by_wt.setdefault(r["work_type"], {"ha": 0, "fuel_l": 0})
+            b["ha"] += r["ha"]
+            b["fuel_l"] += r["liters"]
         results.append({
             "machine": machine_name,
-            "total_fuel_l": total_fuel,
+            "total_fuel_l": round(total_fuel, 1),
             "total_ha": total_ha,
             "avg_lha": round(total_fuel / total_ha, 2) if total_ha else None,
-            "by_work_type": work_type_summary,
+            "by_work_type": [
+                {"work_type": wt, "ha": round(v["ha"], 1), "fuel_l": round(v["fuel_l"]),
+                 "avg_lha": round(v["fuel_l"] / v["ha"], 2) if v["ha"] else None}
+                for wt, v in sorted(by_wt.items())
+            ],
             "daily": daily,
         })
-
     return results
 
 
@@ -754,7 +751,7 @@ def main():
     # Парсимо
     data = {
         "generated_at": datetime.datetime.now().isoformat(),
-        "data_date": args.date or datetime.date.today().strftime("%d.%m"),
+        "data_date": "",  # заповнюється нижче — остання дата з даними (ISO)
     }
 
     if "fuel" in files:
@@ -769,6 +766,18 @@ def main():
     # Розраховуємо л/га якщо є обидва джерела
     if "fuel" in data and "worktime" in data:
         data["lha"] = calc_lha(data["fuel"], data["worktime"])
+
+    # Остання дата, за яку у файлах є хоч якісь дані (≤ сьогодні)
+    today_iso = datetime.date.today().isoformat()
+    cand = []
+    for r in data.get("worktime", {}).get("records", []):
+        cand.append(r["date"])
+    for dates in data.get("fuel", {}).get("monthly", {}).values():
+        cand.extend(dates.keys())
+    for r in data.get("harvest", {}).get("records", []):
+        cand.append(r["date"])
+    cand = [d for d in cand if d <= today_iso]
+    data["data_date"] = max(cand) if cand else today_iso
 
     # Записуємо
     output_path = Path(args.output)
