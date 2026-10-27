@@ -904,7 +904,22 @@ function renderDateSection(iso) {{
           <td class="num">${{fmtN(r.kg/1000,1)}} т</td>
           <td class="num" style="font-weight:600;color:${{col}}">${{r.ha > 0 ? yld.toFixed(1) + " ц/га" : "—"}}</td>
         </tr>`;
-      }}).join("");
+      }}).join("") + (() => {{
+        // Підсумок: загальна площа і загальна зібрана площа
+        const sArea = rows.reduce((s,r) => s + (r.area > 0 ? r.area : 0), 0);
+        const sHa   = rows.reduce((s,r) => s + (r.ha || 0), 0);
+        const sKg   = rows.reduce((s,r) => s + (r.kg || 0), 0);
+        const sPct  = sArea > 0 ? Math.round(sHa / sArea * 100) : null;
+        const bt = "border-top:2px solid var(--border);font-weight:700";
+        return `<tr>
+          <td style="${{bt}}">Разом</td>
+          <td class="num" style="${{bt}}">${{fmtN(sArea,0)}}</td>
+          <td style="${{bt}}"></td>
+          <td class="num" style="${{bt}}">${{fmtN(sHa,0)}}${{sPct != null ? `<span style="color:var(--fg2);font-size:11px;font-weight:400"> (${{sPct}}%)</span>` : ""}}</td>
+          <td class="num" style="${{bt}}">${{fmtN(sKg/1000,1)}} т</td>
+          <td style="${{bt}}"></td>
+        </tr>`;
+      }})();
     }}
   }}
 
