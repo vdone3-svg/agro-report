@@ -57,22 +57,29 @@ def build_html(data: dict) -> str:
     # ── Збирання ────────────────────────────────────────────────
     htotals = harvest.get("totals", {})
     hrecs = harvest.get("records", [])
-    sun_kg  = htotals.get("sunflower_kg", 0) or 0
-    corn_kg = htotals.get("corn_kg", 0) or 0
-    wht_kg  = htotals.get("wheat_kg", 0) or 0
-    sun_ha  = htotals.get("sunflower_ha", 0) or 0
-    corn_ha = htotals.get("corn_ha", 0) or 0
-    wht_ha  = htotals.get("wheat_ha", 0) or 0
+    sun_kg      = htotals.get("sunflower_kg", 0) or 0
+    corn_kg     = htotals.get("corn_kg", 0) or 0
+    wht_kg      = htotals.get("wheat_kg", 0) or 0
+    waste_sun_kg= htotals.get("waste_sun_kg", 0) or 0
+    sun_ha      = htotals.get("sunflower_ha", 0) or 0
+    corn_ha     = htotals.get("corn_ha", 0) or 0
+    wht_ha      = htotals.get("wheat_ha", 0) or 0
 
-    # Розбивка збирання по місяцях
+    # Залишки на складі (з останнього рядка harvest)
+    hstock = harvest.get("stock", {})
+    stock_sun  = hstock.get("sunflower_kg", 0) or 0
+    stock_corn = hstock.get("corn_kg", 0) or 0
+    stock_wht  = hstock.get("wheat_kg", 0) or 0
+    stock_waste= hstock.get("waste_sun_kg", 0) or 0
+
+    # Розбивка збирання по місяцях — з by_month (вже розраховано в парсері)
+    harvest_by_month = harvest.get("by_month", {})
     monthly_harvest = defaultdict(lambda: defaultdict(float))
-    for rec in hrecs:
-        m = (rec.get("date") or "")[:7]
-        if not m:
-            continue
-        monthly_harvest[m]["sun"]  += rec.get("sunflower_kg", 0) or 0
-        monthly_harvest[m]["corn"] += rec.get("corn_kg", 0) or 0
-        monthly_harvest[m]["wht"]  += rec.get("wheat_kg", 0) or 0
+    for m, bm in harvest_by_month.items():
+        monthly_harvest[m]["sun"]  = bm.get("sunflower_kg", 0) or 0
+        monthly_harvest[m]["corn"] = bm.get("corn_kg", 0) or 0
+        monthly_harvest[m]["wht"]  = bm.get("wheat_kg", 0) or 0
+        monthly_harvest[m]["waste"]= bm.get("waste_sun_kg", 0) or 0
 
     # посівна — не показуємо в дашборді
 
@@ -142,12 +149,20 @@ def build_html(data: dict) -> str:
             "sun_kg": round(sun_kg),
             "corn_kg": round(corn_kg),
             "wht_kg": round(wht_kg),
+            "waste_sun_kg": round(waste_sun_kg),
             "sun_ha": round(sun_ha, 1),
             "corn_ha": round(corn_ha, 1),
             "wht_ha": round(wht_ha, 1),
+            "stock": {
+                "sun_kg": round(stock_sun),
+                "corn_kg": round(stock_corn),
+                "wht_kg": round(stock_wht),
+                "waste_sun_kg": round(stock_waste),
+            },
             "monthly": {
                 m: {k: round(v) for k, v in vals.items()}
                 for m, vals in sorted(monthly_harvest.items())
+                if m >= "2026-09"
             },
             "records": [
                 {
@@ -157,8 +172,10 @@ def build_html(data: dict) -> str:
                     "sun_kg": r.get("sunflower_kg", 0) or 0,
                     "corn_kg": r.get("corn_kg", 0) or 0,
                     "wht_kg": r.get("wheat_kg", 0) or 0,
+                    "waste_sun_kg": r.get("waste_sun_kg", 0) or 0,
                 }
                 for r in hrecs
+                if (r.get("date") or "") >= "2026-09-01"
             ],
         },
     }, ensure_ascii=False)
@@ -916,32 +933,50 @@ function render() {{
   // ── Збирання по місяцях ───────────────────────────────────────────────────
   const h = d.harvest || {{}};
   const monthly = h.monthly || {{}};
-  const months = Object.keys(monthly).sort();
+  const stock = h.stock || {{}};
+  const months = Object.keys(monthly).sort().filter(m => m >= "2026-09");
   const MONTH_UA = {{"01":"Січ","02":"Лют","03":"Бер","04":"Квіт","05":"Трав","06":"Черв",
                      "07":"Лип","08":"Серп","09":"Вер","10":"Жовт","11":"Лист","12":"Груд"}};
+  const hmEl = document.getElementById("harvestMonthly");
   if (months.length) {{
     let tbl = `<table><thead><tr><th>Культура</th>`;
     tbl += months.map(m => `<th style="text-align:right">${{MONTH_UA[m.slice(5)] || m.slice(5)}}</th>`).join("");
     tbl += `<th style="text-align:right">Всього т</th></tr></thead><tbody>`;
     const cultures = [
-      {{ key:"sun",  name:"Соняшник", color:"var(--yellow)", total:h.sun_kg }},
-      {{ key:"corn", name:"Кукурудза", color:"var(--green)",  total:h.corn_kg }},
-      {{ key:"wht",  name:"Пшениця",  color:"var(--accent)", total:h.wht_kg }},
+      {{ key:"sun",   name:"🌻 Соняшник",      color:"var(--yellow)", total:h.sun_kg,      stockKg: stock.sun_kg }},
+      {{ key:"corn",  name:"🌽 Кукурудза",      color:"var(--green)",  total:h.corn_kg,     stockKg: stock.corn_kg }},
+      {{ key:"wht",   name:"🌾 Пшениця",        color:"var(--accent)", total:h.wht_kg,      stockKg: stock.wht_kg }},
+      {{ key:"waste", name:"🗑 Мусор соняху",   color:"var(--fg2)",   total:h.waste_sun_kg, stockKg: stock.waste_sun_kg }},
     ];
     for (const c of cultures) {{
+      // Пропускаємо рядок якщо і всього і залишок = 0
+      if (!(c.total > 0) && !(c.stockKg > 0)) continue;
       tbl += `<tr>`;
       tbl += `<td style="color:${{c.color}};font-weight:600">${{c.name}}</td>`;
       tbl += months.map(m => {{
         const kg = (monthly[m] && monthly[m][c.key]) || 0;
         return `<td class="num">${{kg > 0 ? fmtN(kg/1000,1)+"т" : "—"}}</td>`;
       }}).join("");
-      tbl += `<td class="num"><b>${{fmtN(c.total/1000,1)}} т</b></td>`;
+      tbl += `<td class="num"><b>${{fmtN((c.total||0)/1000,1)}} т</b></td>`;
       tbl += `</tr>`;
     }}
     tbl += `</tbody></table>`;
-    document.getElementById("harvestMonthly").innerHTML = tbl;
+
+    // Блок залишків на складі
+    const stockItems = cultures.filter(c => c.stockKg > 0);
+    let stockHtml = "";
+    if (stockItems.length) {{
+      stockHtml = `<div style="margin-top:12px;padding:12px 16px;background:var(--bg3);border-radius:8px;border-left:3px solid var(--accent)">
+        <div style="font-size:11px;color:var(--fg2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">📦 Залишок на току</div>
+        <div style="display:flex;flex-wrap:wrap;gap:16px">
+          ${{stockItems.map(c => `<div><span style="color:${{c.color}};font-weight:600">${{c.name}}</span>
+            <span style="margin-left:6px;font-family:'JetBrains Mono',monospace;font-size:14px">${{fmtN(c.stockKg/1000,1)}} т</span></div>`).join("")}}
+        </div>
+      </div>`;
+    }}
+    hmEl.innerHTML = tbl + stockHtml;
   }} else {{
-    document.getElementById("harvestMonthly").innerHTML = `<div class="no-data">Немає даних</div>`;
+    hmEl.innerHTML = `<div class="no-data">Немає даних</div>`;
   }}
 
   // посівна — прибрано

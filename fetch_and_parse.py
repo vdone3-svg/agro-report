@@ -331,14 +331,19 @@ def parse_harvest(filepath: Path) -> dict:
     """
     Парсить Косіння_2026.xlsx.
     Лист '2026': дата | №поля | га | соняшник кг | кукурудза кг | кукурудза доробіток |
-                 пшениця кг | мусор | відп.соняшник | відп.кукурудза | відп.пшениця | відп.мусор |
-                 ... залишки ...
+                 пшениця кг | мусор сонях | відп.соняшник | відп.кукурудза | відп.пшениця | відп.мусор |
+                 залишок соняшника | залишок кукурудзи | залишок пшениці | залишок мусор сонях
     Повертає:
-      - records: [{date, field, ha, sunflower_kg, corn_kg, wheat_kg, sent_sun, sent_corn, sent_wheat}]
-      - totals: {sunflower_ha, corn_ha, wheat_ha, sunflower_kg, corn_kg, wheat_kg}
+      - records: [{date, field, ha, sunflower_kg, corn_kg, wheat_kg, waste_sun_kg,
+                   sent_sun, sent_corn, sent_wheat, sent_waste_sun}]  — тільки з вересня
+      - totals: {sunflower_ha, corn_ha, wheat_ha, sunflower_kg, corn_kg, wheat_kg, waste_sun_kg}
+                 з вересня
+      - stock: {sunflower_kg, corn_kg, wheat_kg, waste_sun_kg}  — залишки з останнього рядка
+      - by_month: {"2026-09": {...}, "2026-10": {...}}  — по місяцях (вересень+)
     """
+    HARVEST_START = datetime.date(2026, 9, 1)  # динаміка і totals — з вересня
     wb = load_workbook(filepath, read_only=True, data_only=True)
-    result = {"records": [], "totals": {}}
+    result = {"records": [], "totals": {}, "stock": {}, "by_month": {}}
 
     ws = None
     for sn in wb.sheetnames:
@@ -347,12 +352,14 @@ def parse_harvest(filepath: Path) -> dict:
             break
 
     if ws:
-        # row2 = заголовки, row3+ = дані
         totals = {
             "sunflower_ha": 0, "corn_ha": 0, "wheat_ha": 0,
-            "sunflower_kg": 0, "corn_kg": 0, "wheat_kg": 0,
-            "sent_sun": 0, "sent_corn": 0, "sent_wheat": 0,
+            "sunflower_kg": 0, "corn_kg": 0, "wheat_kg": 0, "waste_sun_kg": 0,
+            "sent_sun": 0, "sent_corn": 0, "sent_wheat": 0, "sent_waste_sun": 0,
         }
+        by_month = {}
+        last_stock = None  # зберігаємо залишки з кожного рядка, беремо останній
+
         for row in ws.iter_rows(min_row=3, values_only=True):
             date_val = row[0]
             if not isinstance(date_val, (datetime.datetime, datetime.date)):
@@ -364,9 +371,28 @@ def parse_harvest(filepath: Path) -> dict:
             sun_kg = _safe_float(row[3])
             corn_kg = _safe_float(row[4])
             wheat_kg = _safe_float(row[6])
+            waste_sun_kg = _safe_float(row[7])
             sent_sun = _safe_float(row[8])
             sent_corn = _safe_float(row[9])
             sent_wheat = _safe_float(row[10])
+            sent_waste = _safe_float(row[11])
+
+            # Залишки на складі (cols 12-15) — оновлюємо з кожного рядка що є
+            stock_sun = _safe_float(row[12])
+            stock_corn = _safe_float(row[13])
+            stock_wheat = _safe_float(row[14])
+            stock_waste = _safe_float(row[15])
+            if any(v is not None and v > 0 for v in [stock_sun, stock_corn, stock_wheat, stock_waste]):
+                last_stock = {
+                    "sunflower_kg": stock_sun or 0,
+                    "corn_kg": stock_corn or 0,
+                    "wheat_kg": stock_wheat or 0,
+                    "waste_sun_kg": stock_waste or 0,
+                }
+
+            # Records та totals — тільки з вересня
+            if date_val < HARVEST_START:
+                continue
 
             rec = {
                 "date": date_val.isoformat(),
@@ -375,13 +401,15 @@ def parse_harvest(filepath: Path) -> dict:
                 "sunflower_kg": sun_kg or 0,
                 "corn_kg": corn_kg or 0,
                 "wheat_kg": wheat_kg or 0,
+                "waste_sun_kg": waste_sun_kg or 0,
                 "sent_sun": sent_sun or 0,
                 "sent_corn": sent_corn or 0,
                 "sent_wheat": sent_wheat or 0,
+                "sent_waste_sun": sent_waste or 0,
             }
             result["records"].append(rec)
 
-            # Підраховуємо підсумки
+            # Підсумки з вересня
             if ha:
                 if sun_kg:
                     totals["sunflower_ha"] += ha
@@ -392,11 +420,34 @@ def parse_harvest(filepath: Path) -> dict:
             totals["sunflower_kg"] += sun_kg or 0
             totals["corn_kg"] += corn_kg or 0
             totals["wheat_kg"] += wheat_kg or 0
+            totals["waste_sun_kg"] += waste_sun_kg or 0
             totals["sent_sun"] += sent_sun or 0
             totals["sent_corn"] += sent_corn or 0
             totals["sent_wheat"] += sent_wheat or 0
+            totals["sent_waste_sun"] += sent_waste or 0
+
+            # По місяцях
+            month_key = date_val.strftime("%Y-%m")
+            if month_key not in by_month:
+                by_month[month_key] = {
+                    "sunflower_kg": 0, "corn_kg": 0, "wheat_kg": 0, "waste_sun_kg": 0,
+                    "sunflower_ha": 0, "corn_ha": 0, "wheat_ha": 0,
+                }
+            bm = by_month[month_key]
+            bm["sunflower_kg"] += sun_kg or 0
+            bm["corn_kg"] += corn_kg or 0
+            bm["wheat_kg"] += wheat_kg or 0
+            bm["waste_sun_kg"] += waste_sun_kg or 0
+            if ha:
+                if sun_kg:    bm["sunflower_ha"] += ha
+                elif corn_kg: bm["corn_ha"] += ha
+                elif wheat_kg:bm["wheat_ha"] += ha
 
         result["totals"] = totals
+        result["by_month"] = by_month
+        result["stock"] = last_stock or {
+            "sunflower_kg": 0, "corn_kg": 0, "wheat_kg": 0, "waste_sun_kg": 0
+        }
 
     wb.close()
     return result
