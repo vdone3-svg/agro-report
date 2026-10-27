@@ -26,7 +26,7 @@ jobs:
           curl https://rclone.org/install.sh | sudo bash
           rclone --version
 
-      - name: Configure rclone
+      - name: Configure rclone (OneDrive особистий)
         run: |
           mkdir -p ~/.config/rclone
           echo "${{ secrets.RCLONE_CONF }}" > ~/.config/rclone/rclone.conf
@@ -35,10 +35,9 @@ jobs:
         run: |
           mkdir -p data_files
           TODAY=$(date +%d.%m)
-          FOLDER="onedrive:2026_2/${TODAY}"
+          FOLDER="onedrive:Долинское ОТЧЕТЫ/2026_2/${TODAY}"
           echo "Завантажую з: $FOLDER"
-          rclone copy "$FOLDER" data_files/ --include "*.xlsx" -v || true
-          rclone copy "onedrive:2026_2/" data_files/ --include "*.xlsx" --max-depth 1 -v || true
+          rclone copy "$FOLDER" data_files/ --include "*.xlsx" -v
           ls -la data_files/
 
       - name: Parse data
