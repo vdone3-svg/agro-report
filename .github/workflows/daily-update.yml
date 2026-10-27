@@ -43,7 +43,7 @@ jobs:
             ls -la data_files/
           else
             echo "Папка ${TODAY} ще не створена — використовую останні доступні дані"
-            LAST=$(rclone lsd "onedrive:Долинское ОТЧЕТЫ/2026_2/" 2>/dev/null | awk '{print $NF}' | sort | tail -1)
+            LAST=$(rclone lsd "onedrive:Долинское ОТЧЕТЫ/2026_2/" 2>/dev/null | awk '{print $NF}' | grep -E '^[0-9]{2}\.[0-9]{2}$' | sort | tail -1)
             echo "Остання папка: $LAST"
             rclone copy "onedrive:Долинское ОТЧЕТЫ/2026_2/$LAST" data_files/ --include "*.xlsx" -v
             ls -la data_files/
