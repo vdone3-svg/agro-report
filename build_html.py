@@ -201,7 +201,7 @@ const WEATHER_UPDATED = "26.10.2026 15:37 (AccuWeather)";"""
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Агро Звіт — ТОВ Долинське</title>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Montserrat:wght@700;800&display=swap">
 <style>
 :root {{
   --bg:#0f1117;--bg2:#181c27;--bg3:#1f2435;--border:#2a2f42;
@@ -234,7 +234,12 @@ body{{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--
 .header{{position:sticky;top:env(safe-area-inset-top,0px);z-index:100;background:var(--bg);border-bottom:1px solid var(--border);
   display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;padding-block:12px;}}
 .header-left{{display:flex;align-items:center;gap:12px;}}
-.header-logo{{width:32px;height:32px;border-radius:8px;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:16px;}}
+.header-logo{{display:flex;align-items:center;gap:10px;}}
+.header-logo svg{{flex-shrink:0;}}
+.header-logo-text{{display:flex;flex-direction:column;gap:0px;line-height:1;}}
+.header-logo-text .agro{{font-family:'Montserrat','Inter',system-ui,sans-serif;font-weight:800;font-size:18px;color:var(--fg);letter-spacing:0.02em;}}
+.header-logo-text .zvit{{font-family:'Montserrat','Inter',system-ui,sans-serif;font-weight:700;font-size:18px;color:var(--accent);letter-spacing:0.04em;}}
+.header-logo-text .sub{{font-size:9px;color:var(--fg3);letter-spacing:0.14em;text-transform:uppercase;margin-top:2px;}}
 .header h1{{font-size:16px;font-weight:600;}}
 .header-date{{font-size:12px;color:var(--fg2);}}
 .theme-toggle{{background:var(--bg3);border:1px solid var(--border);color:var(--fg2);width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;}}
@@ -390,9 +395,24 @@ tr:last-child td{{border-bottom:none;}}tr:hover td{{background:var(--bg3);}}
 
 <div class="header">
   <div class="header-left">
-    <div class="header-logo">🌾</div>
+    <div class="header-logo">
+      <svg width="38" height="44" viewBox="0 0 56 60" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="26.5" y="6" width="3" height="34" rx="1.5" fill="#5E9A14"/>
+        <ellipse cx="20" cy="16" rx="6" ry="4" transform="rotate(-30 20 16)" fill="#7CB518"/>
+        <ellipse cx="18" cy="25" rx="6" ry="4" transform="rotate(-25 18 25)" fill="#5E9A14"/>
+        <ellipse cx="19" cy="33" rx="5" ry="3.5" transform="rotate(-20 19 33)" fill="#4A7A10"/>
+        <ellipse cx="36" cy="16" rx="6" ry="4" transform="rotate(30 36 16)" fill="#7CB518"/>
+        <ellipse cx="38" cy="25" rx="6" ry="4" transform="rotate(25 38 25)" fill="#5E9A14"/>
+        <ellipse cx="37" cy="33" rx="5" ry="3.5" transform="rotate(20 37 33)" fill="#4A7A10"/>
+        <path d="M20 46L28 54L36 46" stroke="#C49A1A" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <div class="header-logo-text">
+        <span class="agro">АГРО</span>
+        <span class="zvit">ЗВІТ</span>
+        <span class="sub">ТОВ «Долинське»</span>
+      </div>
+    </div>
     <div>
-      <h1>Агро Звіт</h1>
       <div class="header-date" id="reportDateLabel">Завантаження...</div>
     </div>
   </div>
