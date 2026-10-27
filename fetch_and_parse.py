@@ -67,6 +67,12 @@ FUEL_LHA_MACHINES = {
     # МТЗ-892 виключаємо — в обліку записується як "МТЗ-892/Дойц115/КИЙ-14102" (три машини разом)
 }
 
+# Уточнені площі полів (га в обробітку), коли в довіднику Excel стоїть інше.
+# Ключ — назва поля в нижньому регістрі, як у довіднику косіння.
+FIELD_AREA_OVERRIDES = {
+    "9 малаківка": 7,   # Денис, 27.10.2026: в обробітку 7 га (у довіднику 9)
+}
+
 # ─── rclone helpers ───────────────────────────────────────────────────────────
 
 def rclone_list_dirs(remote_path: str) -> list[str]:
@@ -447,8 +453,9 @@ def parse_harvest(filepath: Path) -> dict:
         name = ws.cell(r, 17).value
         if name is None or (isinstance(name, str) and name.strip().lower().startswith("на складі")):
             break
-        area = ws.cell(r, 19).value
-        fields.append({"field": str(name).strip(), "area_ha": num(area)})
+        area = num(ws.cell(r, 19).value)
+        area = FIELD_AREA_OVERRIDES.get(str(name).strip().lower(), area)
+        fields.append({"field": str(name).strip(), "area_ha": area})
     result["fields"] = fields
 
     # ── Таблиця власника «На складі зараз» ──────────────────────────────────
