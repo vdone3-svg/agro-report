@@ -483,6 +483,25 @@ tr:last-child td{{border-bottom:none;}}tr:hover td{{background:var(--bg3);}}
   </div>
 
   <div>
+    <div class="section-title">Хід збирання по полях</div>
+    <div class="card">
+      <div class="card-header"><span>🌾</span> Урожайність по полях — наростаючий підсумок</div>
+      <div class="tbl-wrap">
+        <table id="harvestByFieldTable">
+          <thead><tr>
+            <th>Поле</th>
+            <th>Культура</th>
+            <th class="num">Зібрано, га</th>
+            <th class="num">Зібрано, т</th>
+            <th class="num">Урожайність, ц/га</th>
+          </tr></thead>
+          <tbody id="harvestByFieldBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div>
     <div class="section-title">Збирання — наростаючий підсумок по місяцях</div>
     <div class="card">
       <div class="card-header"><span>📈</span> Динаміка збирання по місяцях</div>
@@ -806,6 +825,44 @@ function renderDateSection(iso) {{
         ${{k.sub ? `<div class="kpi-sub">${{k.sub}}</div>` : ""}}
         ${{k.day ? `<div class="kpi-sub" style="color:var(--green)">${{k.day}}</div>` : ""}}
       </div>`).join("");
+  }}
+
+  // ── Хід збирання по полях ───────────────────────────────────────────────────
+  const hFieldBody = document.getElementById("harvestByFieldBody");
+  if (hFieldBody) {{
+    // Агрегуємо по полях з усіх записів (наростаючий — всі дати до iso включно)
+    const byField = {{}};
+    for (const r of hAllRecs.filter(r => r.date <= iso)) {{
+      const f = r.field || "—";
+      // Визначаємо культуру по тому, що більше
+      let crop = null, cropKg = 0;
+      if ((r.sun_kg||0) > cropKg)  {{ crop = "Соняшник"; cropKg = r.sun_kg||0; }}
+      if ((r.corn_kg||0) > cropKg) {{ crop = "Кукурудза"; cropKg = r.corn_kg||0; }}
+      if ((r.wht_kg||0) > cropKg)  {{ crop = "Пшениця";  cropKg = r.wht_kg||0; }}
+      if (!crop) continue;
+      const key = f + "||" + crop;
+      if (!byField[key]) byField[key] = {{ field: f, crop, ha: 0, kg: 0 }};
+      byField[key].ha += r.ha || 0;
+      byField[key].kg += cropKg;
+    }}
+    const rows = Object.values(byField).sort((a,b) => a.field.localeCompare(b.field, "uk"));
+    if (rows.length === 0) {{
+      hFieldBody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--fg3);padding:16px">Немає даних</td></tr>`;
+    }} else {{
+      const cropColor = {{ "Соняшник": "var(--yellow)", "Кукурудза": "var(--green)", "Пшениця": "var(--accent)" }};
+      hFieldBody.innerHTML = rows.map(r => {{
+        const t = r.kg / 1000;
+        const yld = r.ha > 0 ? (r.kg / r.ha / 100) : 0; // ц/га
+        const col = cropColor[r.crop] || "var(--fg)";
+        return `<tr>
+          <td style="font-weight:500">${{r.field}}</td>
+          <td style="color:${{col}}">${{r.crop}}</td>
+          <td class="num">${{fmtN(r.ha,1)}}</td>
+          <td class="num">${{fmtN(t,1)}} т</td>
+          <td class="num" style="font-weight:600;color:${{col}}">${{yld.toFixed(1)}} ц/га</td>
+        </tr>`;
+      }}).join("");
+    }}
   }}
 
   // ── Л/га накопичувально з 1-го місяця по вибрану дату ─────────────────────
