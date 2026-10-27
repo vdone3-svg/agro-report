@@ -453,7 +453,16 @@ def parse_seeding(filepath: Path) -> dict:
 
             ha = _safe_float(row[2]) or 0
             fertilizer_kg = _safe_float(row[5]) or 0
-            seed_kg = _safe_float(row[6]) or 0
+            # seed_kg може бути числом АБО рядком типу "Пшениця-4500кг"
+            raw_seed = row[6]
+            if isinstance(raw_seed, (int, float)):
+                seed_kg = _safe_float(raw_seed) or 0
+            elif isinstance(raw_seed, str):
+                # витягуємо перше число з рядка (напр. "Пшениця-4500кг" → 4500)
+                m = re.search(r"(\d[\d\s,\.]*)", raw_seed.replace(" ", ""))
+                seed_kg = float(m.group(1).replace(",", ".")) if m else 0
+            else:
+                seed_kg = 0
             remainder = _safe_float(row[7])
 
             result["records"].append({
@@ -516,7 +525,13 @@ def calc_lha(fuel_data: dict, worktime_data: dict) -> list[dict]:
     Розраховує л/га для кожної машини за поточний місяць.
     Логіка: заправка дати X ÷ га з найближчого дня ≤ X де є записи по цій техніці.
     Додатково: розбивка по типах робіт (оранка vs дискування тощо).
+    Важливо: для підрахунку л/га за місяць беремо тільки місяці де є заправки.
     """
+    # Визначаємо місяці в яких є заправки (для кожної машини)
+    fuel_months = {}  # {machine_name: set of "YYYY-MM"}
+    for machine_name, dates in fuel_data.get("monthly", {}).items():
+        fuel_months[machine_name] = {d[:7] for d in dates.keys()}
+
     # Будуємо карту га по техніці і типу роботи:
     # {fuel_key: {date: {work_type: ha, '_total': ha}}}
     ha_by_machine = {}
@@ -541,6 +556,10 @@ def calc_lha(fuel_data: dict, worktime_data: dict) -> list[dict]:
             if fuel_key:
                 break
         if not fuel_key:
+            continue
+
+        # Враховуємо тільки га за місяці де є заправки цієї машини
+        if fuel_key in fuel_months and date[:7] not in fuel_months[fuel_key]:
             continue
 
         if fuel_key not in ha_by_machine:
