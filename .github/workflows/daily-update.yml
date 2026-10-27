@@ -37,8 +37,17 @@ jobs:
           TODAY=$(date +%d.%m)
           FOLDER="onedrive:Долинское ОТЧЕТЫ/2026_2/${TODAY}"
           echo "Завантажую з: $FOLDER"
-          rclone copy "$FOLDER" data_files/ --include "*.xlsx" -v
-          ls -la data_files/
+          if rclone lsd "$FOLDER" 2>/dev/null; then
+            rclone copy "$FOLDER" data_files/ --include "*.xlsx" -v
+            echo "Файли завантажено:"
+            ls -la data_files/
+          else
+            echo "Папка ${TODAY} ще не створена — використовую останні доступні дані"
+            LAST=$(rclone lsd "onedrive:Долинское ОТЧЕТЫ/2026_2/" 2>/dev/null | awk '{print $NF}' | sort | tail -1)
+            echo "Остання папка: $LAST"
+            rclone copy "onedrive:Долинское ОТЧЕТЫ/2026_2/$LAST" data_files/ --include "*.xlsx" -v
+            ls -la data_files/
+          fi
 
       - name: Parse data
         run: python3 fetch_and_parse.py
