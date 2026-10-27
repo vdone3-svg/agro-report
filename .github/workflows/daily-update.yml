@@ -31,29 +31,41 @@ jobs:
           mkdir -p ~/.config/rclone
           echo "${{ secrets.RCLONE_CONF }}" | base64 --decode > ~/.config/rclone/rclone.conf
 
-      - name: Download xlsx files from OneDrive
+      # Завантаження з OneDrive робить сам парсер: бере папку сьогоднішньої дати
+      # (ДД.ММ), а якщо її ще нема — найновішу (сортування за місяцем і днем).
+      - name: Download + parse data
         run: |
-          mkdir -p data_files
-          TODAY=$(date +%d.%m)
-          FOLDER="onedrive:Долинское ОТЧЕТЫ/2026_2/${TODAY}"
-          echo "Завантажую з: $FOLDER"
-          if rclone lsd "$FOLDER" 2>/dev/null; then
-            rclone copy "$FOLDER" data_files/ --include "*.xlsx" -v
-            echo "Файли завантажено:"
-            ls -la data_files/
-          else
-            echo "Папка ${TODAY} ще не створена — використовую останні доступні дані"
-            LAST=$(rclone lsd "onedrive:Долинское ОТЧЕТЫ/2026_2/" 2>/dev/null | awk '{print $NF}' | grep -E '^[0-9]{2}\.[0-9]{2}$' | sort | tail -1)
-            echo "Остання папка: $LAST"
-            rclone copy "onedrive:Долинское ОТЧЕТЫ/2026_2/$LAST" data_files/ --include "*.xlsx" -v
-            ls -la data_files/
-          fi
-
-      - name: Parse data
-        run: python3 fetch_and_parse.py
+          python3 fetch_and_parse.py
+          echo "Файли:"; ls -la data_files/*/ || true
 
       - name: Build HTML
         run: python3 build_html.py
+
+      - name: Check data is not empty
+        run: |
+          python3 - << 'PY'
+          import json
+          d = json.load(open("data.json", encoding="utf-8"))
+          f, w, h = d.get("fuel", {}), d.get("worktime", {}), d.get("harvest", {})
+          checks = {
+              "паливо (заправки)": len(f.get("monthly", {})),
+              "баланс палива": len(f.get("balance_history", [])),
+              "облік робіт": len(w.get("records", [])),
+              "косіння (записи)": len(h.get("records", [])),
+              "довідник полів": len(h.get("fields", [])),
+          }
+          print("data_date:", d.get("data_date"), checks)
+          bad = [k for k, v in checks.items() if not v]
+          assert not bad, f"Порожні блоки: {bad}"
+          PY
+
+      # На сайт іде ТІЛЬКИ дашборд. xlsx і data.json (прізвища, паливо, склад)
+      # не публікуються.
+      - name: Prepare site
+        run: |
+          mkdir -p public
+          cp index.html public/index.html
+          ls -la public/
 
       - name: Deploy to Netlify
         env:
@@ -61,4 +73,22 @@ jobs:
           NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
         run: |
           npm install -g netlify-cli
-          netlify deploy --prod --dir=. --site=$NETLIFY_SITE_ID --auth=$NETLIFY_AUTH_TOKEN
+          netlify deploy --prod --dir=public --site=$NETLIFY_SITE_ID --auth=$NETLIFY_AUTH_TOKEN
+
+      # Перевірка після деплою — якщо щось не так, запуск позначиться як failed
+      - name: Verify live site
+        run: |
+          sleep 10
+          URL=https://dolynske-report.netlify.app
+          curl -sf "$URL/" -o live.html
+          grep -q '"crop_plan"' live.html || { echo "На сайті стара версія"; exit 1; }
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" "$URL/data.json")
+          echo "data.json -> $CODE"
+          test "$CODE" = "404" || { echo "data.json досі публічний"; exit 1; }
+
+      - name: Keep copy of published dashboard
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard
+          path: public/index.html
+          retention-days: 3

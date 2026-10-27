@@ -103,6 +103,29 @@ def build_html(data: dict) -> str:
     # Збираємо список дат що мають записи
     dates_with_data = sorted(set(r["date"] for r in all_work_records))
 
+    # ── План по культурах = сума площ полів (довідник косіння + культура з посівної) ──
+    import re as _re
+    def _crop(c):
+        c = str(c or "").strip().lower()
+        if c.startswith("пшен"): return "Пшениця"
+        if c.startswith("кукур"): return "Кукурудза"
+        if c.startswith("сонях") or c.startswith("соняш"): return "Соняшник"
+        return None
+    plan_by_field = {str(x.get("field", "")).strip().lower(): x.get("crop", "")
+                     for x in seeding.get("plan", [])}
+    crop_plan = {}
+    for f in harvest.get("fields", []):
+        txt = plan_by_field.get(str(f.get("field", "")).strip().lower(), "")
+        parts = _re.findall(r"([А-Яа-яІіЇїЄєҐґ']+)\s*(\d+(?:[.,]\d+)?)\s*га", str(txt))
+        if parts:
+            for name, area in parts:
+                c = _crop(name)
+                if c:
+                    crop_plan[c] = crop_plan.get(c, 0) + float(area.replace(",", "."))
+        elif _crop(txt):
+            c = _crop(txt)
+            crop_plan[c] = crop_plan.get(c, 0) + (f.get("area_ha") or 0)
+
     # ── Збираємо JSON для JS ─────────────────────────────────────
     js_data = json.dumps({
         "generated_at": gen_at,
@@ -113,6 +136,7 @@ def build_html(data: dict) -> str:
         },
         "balance_history": fuel.get("balance_history", []),
         "petrol_machines": fuel.get("petrol_machines", []),
+        "crop_plan": {k: round(v, 1) for k, v in crop_plan.items()},
         "fuel_monthly_total": round(total_dp_month),
         "fuel_by_machine": {
             m: round(sum(v for v in d.values() if v))
@@ -540,6 +564,8 @@ const CULTURE_PLAN = {{
   "Кукурудза": {{ ha:303, color:"var(--green)",   icon:"🌽" }},
   "Соняшник":  {{ ha:280, color:"var(--yellow)",  icon:"🌻" }},
 }};
+// Площі плану — з довідника полів (якщо є у даних), інакше — значення вище
+for (const [k, v] of Object.entries(DATA.crop_plan || {{}})) if (CULTURE_PLAN[k] && v > 0) CULTURE_PLAN[k].ha = v;
 
 // ─── ПОГОДА ───────────────────────────────────────────────────────────────────
 {weather_js}

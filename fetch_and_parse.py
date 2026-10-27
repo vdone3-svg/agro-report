@@ -154,10 +154,15 @@ def download_files(date_str: str | None = None) -> Path | None:
 
 def find_file(local_dir: Path, keyword: str) -> Path | None:
     """Шукає файл по ключовому слову (без урахування регістру)."""
-    for f in local_dir.iterdir():
-        if f.suffix.lower() == ".xlsx" and keyword.lower() in f.name.lower():
-            return f
-    return None
+    cands = []
+    for f in sorted(local_dir.iterdir()):
+        n = f.name.lower()
+        if f.suffix.lower() != ".xlsx" or keyword.lower() not in n:
+            continue
+        if n.startswith("~$") or "копи" in n or "copy" in n:
+            continue  # тимчасові файли Excel / копії
+        cands.append(f)
+    return cands[0] if cands else None
 
 
 # ─── Парсери ──────────────────────────────────────────────────────────────────
