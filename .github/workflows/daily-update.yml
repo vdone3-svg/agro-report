@@ -26,7 +26,7 @@ jobs:
           curl https://rclone.org/install.sh | sudo bash
           rclone --version
 
-      - name: Configure rclone (OneDrive особистий)
+      - name: Configure rclone
         run: |
           mkdir -p ~/.config/rclone
           echo "${{ secrets.RCLONE_CONF }}" > ~/.config/rclone/rclone.conf
@@ -52,4 +52,4 @@ jobs:
           NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
         run: |
           npm install -g netlify-cli
-          netlify deploy --prod --dir=. --site=$NETLIFY_SITE_ID --auth=$NETLIFY_AUTH_TOKEN
+          netlify deploy
