@@ -189,6 +189,7 @@ def build_html(data: dict) -> str:
                 for m, vals in sorted(monthly_harvest.items())
             },
             "fields": harvest.get("fields", []),
+            "other_issues": harvest.get("other_issues", []),
             "field_plan": [
                 {"field": str(x.get("field", "")).strip(), "ha": x.get("ha"), "crop": x.get("crop", "")}
                 for x in seeding.get("plan", [])
@@ -202,6 +203,9 @@ def build_html(data: dict) -> str:
                     "corn_kg": r.get("corn_kg", 0) or 0,
                     "wht_kg": r.get("wheat_kg", 0) or 0,
                     "waste_sun_kg": r.get("waste_sun_kg", 0) or 0,
+                    "sent_sun": r.get("sent_sun", 0) or 0,
+                    "sent_corn": r.get("sent_corn", 0) or 0,
+                    "sent_wheat": r.get("sent_wheat", 0) or 0,
                 }
                 for r in hrecs
                 if (r.get("date") or "") >= "2026-01-01"
@@ -282,6 +286,16 @@ body{{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--
 .kpi-sub{{font-size:11px;color:var(--fg2);margin-top:4px;}}
 .kpi-value.green{{color:var(--green);}}.kpi-value.accent{{color:var(--accent);}}.kpi-value.yellow{{color:var(--yellow);}}.kpi-value.diesel{{color:var(--diesel);}}.kpi-value.red{{color:var(--red);}}
 .card{{background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden;}}
+.day-changes{{border-left:3px solid var(--accent);}}
+.dc-body{{padding:12px 16px;display:flex;flex-direction:column;gap:12px;}}
+.dc-chips{{display:flex;flex-wrap:wrap;gap:6px;}}
+.dc-chip{{background:var(--bg3);border-radius:999px;padding:4px 10px;font-size:12px;font-weight:600;}}
+.dc-empty{{color:var(--fg2);font-size:13px;}}
+.dc-title{{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--fg2);margin-bottom:4px;}}
+.dc-group ul{{margin:0;padding-left:18px;}}
+.dc-group li{{font-size:13px;line-height:1.5;margin:3px 0;}}
+.dc-group.muted li{{font-size:12px;color:var(--fg2);}}
+.dc-sub{{font-size:11px;color:var(--fg2);}}
 .card-header{{padding:12px 16px;border-bottom:1px solid var(--border);font-weight:600;font-size:13px;display:flex;align-items:center;gap:8px;}}
 .tbl-wrap{{overflow-x:auto;}}
 table{{width:100%;border-collapse:collapse;font-size:13px;}}
@@ -466,6 +480,10 @@ tr:last-child td{{border-bottom:none;}}tr:hover td{{background:var(--bg3);}}
 </div>
 
 <div class="main">
+
+  <div>
+    <div class="card day-changes" id="dayChanges"></div>
+  </div>
 
   <div>
     <div class="section-title">Прогрес збирання сезону</div>
@@ -704,7 +722,155 @@ function selectDate(iso) {{
   renderCalendar();
 }}
 
+// ─── ЩО ЗМІНИЛОСЬ ЗА ДЕНЬ (між попереднім і обраним звітним днем) ─────────────
+function renderDayChanges(iso) {{
+  const el = document.getElementById("dayChanges");
+  if (!el) return;
+  const MON = ["січня","лютого","березня","квітня","травня","червня","липня","серпня","вересня","жовтня","листопада","грудня"];
+  const dLabel = s => `${{parseInt(s.slice(8))}} ${{MON[parseInt(s.slice(5,7)) - 1]}}`;
+  const norm = v => String(v ?? "").trim().toLowerCase();
+  const n0 = v => fmtN(v, 0), n1 = v => (Math.round(v * 10) / 10).toLocaleString("uk-UA");
+
+  // Попередній звітний день — найближча дата з даними до обраної
+  const allDates = [...DATES_WITH_DATA].filter(d => d < iso).sort();
+  const prev = allDates.length ? allDates[allDates.length - 1] : null;
+  const inPeriod = d => d <= iso && (!prev || d > prev);
+  const periodLabel = (!prev || prev === new Date(new Date(iso + "T12:00:00") - 864e5).toISOString().slice(0, 10))
+    ? `за ${{dLabel(iso)}}`
+    : `з ${{dLabel(prev)}} по ${{dLabel(iso)}}`;
+
+  // ── Площі полів (довідник + план посівної, змішані поля — по культурі)
+  const cropNorm = c => {{ c = norm(c);
+    if (c.startsWith("пшен")) return "Пшениця"; if (c.startsWith("кукур")) return "Кукурудза";
+    if (c.startsWith("сонях") || c.startsWith("соняш")) return "Соняшник"; return null; }};
+  const H = DATA.harvest || {{}};
+  const fieldArea = {{}}, cropArea = {{}};
+  for (const f of (H.fields || [])) fieldArea[norm(f.field)] = f.area_ha;
+  for (const p of (H.field_plan || [])) {{
+    const parts = [...String(p.crop || "").matchAll(/([А-Яа-яІіЇїЄєҐґ']+)\\s*(\\d+(?:[.,]\\d+)?)\\s*га/g)];
+    for (const m of parts) {{ const c = cropNorm(m[1]); if (c) cropArea[norm(p.field) + "||" + c] = parseFloat(m[2].replace(",", ".")); }}
+  }}
+  const areaOf = (field, crop) => cropArea[norm(field) + "||" + crop] ?? fieldArea[norm(field)] ?? null;
+  const fieldName = f => /^\\d+$/.test(String(f).trim()) ? `поле ${{f}}` : String(f);
+
+  const items = [];
+  let kpiHarvHa = 0, kpiHarvT = 0, kpiWorkHa = 0;
+
+  // ── 1. Збирання
+  const hRecs = H.records || [];
+  const cropOf = r => (r.sun_kg||0) > 0 ? "Соняшник" : (r.corn_kg||0) > 0 ? "Кукурудза" : (r.wht_kg||0) > 0 ? "Пшениця" : null;
+  const kgOf = r => (r.sun_kg||0) + (r.corn_kg||0) + (r.wht_kg||0);
+  const harvByField = {{}};
+  for (const r of hRecs.filter(r => inPeriod(r.date))) {{
+    const c = cropOf(r); if (!c) continue;
+    const k = norm(r.field) + "||" + c;
+    harvByField[k] = harvByField[k] || {{ field: r.field, crop: c, ha: 0, kg: 0 }};
+    harvByField[k].ha += r.ha || 0; harvByField[k].kg += kgOf(r);
+  }}
+  const CROP_GEN = {{ "Соняшник": "соняшнику", "Кукурудза": "кукурудзи", "Пшениця": "пшениці" }};
+  const CROP_COL = {{ "Соняшник": "var(--yellow)", "Кукурудза": "var(--green)", "Пшениця": "var(--accent)" }};
+  const harvLines = Object.values(harvByField).map(h => {{
+    kpiHarvHa += h.ha; kpiHarvT += h.kg / 1000;
+    const cumHa = hRecs.filter(r => r.date <= iso && cropOf(r) === h.crop && norm(r.field) === norm(h.field)).reduce((s, r) => s + (r.ha||0), 0);
+    const area = areaOf(h.field, h.crop);
+    const yld = h.ha > 0 ? (h.kg / h.ha / 100).toFixed(1).replace(".", ",") : null;
+    const prog = area ? ` · поле зібрано <b>${{n0(cumHa)}} з ${{n0(area)}} га (${{Math.min(100, Math.round(cumHa / area * 100))}}%)</b>` : "";
+    return `<span style="color:${{CROP_COL[h.crop]}};font-weight:600">${{h.crop}}</span>, ${{fieldName(h.field)}}: <b>+${{n0(h.ha)}} га</b>, ${{n1(h.kg/1000)}} т${{yld ? ` (${{yld}} ц/га)` : ""}}${{prog}}`;
+  }});
+  if (harvLines.length) items.push({{ icon: "🌾", title: "Збирання", lines: harvLines }});
+
+  // ── 2. Польові роботи (га, з технікою; без перевезення; комбайн — якщо вже є в збиранні)
+  // В обліку прізвище стоїть лише в першому рядку працівника — підставляємо його далі
+  const W = [];
+  {{ let lastD = null, lastN = "";
+    for (const r of (DATA.all_work_records || [])) {{
+      if (r.date !== lastD) {{ lastD = r.date; lastN = ""; }}
+      if (r.name) lastN = r.name;
+      W.push(Object.assign({{}}, r, {{ name: r.name || lastN }}));
+    }} }}
+  const isField = r => (r.ha||0) > 0 && r.machine && !/перевез/i.test(r.work_type||"");
+  const harvFields = new Set(Object.values(harvByField).map(h => norm(h.field)));
+  const wByKey = {{}};
+  for (const r of W.filter(r => inPeriod(r.date) && isField(r))) {{
+    if (/комбайн/i.test(r.work_type||"") && harvFields.has(norm(r.field))) continue;
+    const k = norm(r.work_type) + "||" + norm(r.field);
+    wByKey[k] = wByKey[k] || {{ wt: r.work_type, field: r.field, ha: 0, machines: new Set(), people: new Set() }};
+    wByKey[k].ha += r.ha; if (r.machine) wByKey[k].machines.add(r.machine); if (r.name) wByKey[k].people.add(r.name);
+  }}
+  const workLines = Object.values(wByKey).sort((a,b) => b.ha - a.ha).map(w => {{
+    kpiWorkHa += w.ha;
+    const cum = W.filter(r => r.date <= iso && isField(r) && norm(r.work_type) === norm(w.wt) && norm(r.field) === norm(w.field)).reduce((s, r) => s + r.ha, 0);
+    const area = fieldArea[norm(w.field)];
+    const over = area && cum > area * 1.05;
+    const prog = area ? ` · виконано <b>${{n0(cum)}} з ${{n0(area)}} га</b>${{over ? ` <span style="color:var(--yellow)">⚠ більше площі поля</span>` : ""}}` : (cum > w.ha ? ` · всього ${{n0(cum)}} га` : "");
+    const who = [...w.machines].join(", ") + (w.people.size ? ` — ${{[...w.people].join(", ")}}` : "");
+    return `<b>${{w.wt}}</b>, ${{fieldName(w.field) || "поле не вказано"}}: <b>${{n0(w.ha)}} га</b>${{prog}}<div class="dc-sub">${{who}}</div>`;
+  }});
+  if (workLines.length) items.push({{ icon: "🚜", title: "Польові роботи", lines: workLines }});
+
+  // ── 3. Інші роботи (погодинні)
+  const hByWt = {{}};
+  const ROUTINE = /чергуван|обліковець/i;
+  for (const r of W.filter(r => inPeriod(r.date) && !((r.ha||0) > 0) && r.work_type && !ROUTINE.test(r.work_type))) {{
+    const k = r.work_type;
+    hByWt[k] = hByWt[k] || {{ people: new Set(), hrs: 0 }};
+    if (r.name) hByWt[k].people.add(r.name); hByWt[k].hrs += r.hrs || 0;
+  }}
+  const otherLines = Object.entries(hByWt).sort((a,b) => b[1].hrs - a[1].hrs).map(([wt, v]) =>
+    `${{wt}}: ${{v.people.size ? [...v.people].join(", ") : "—"}}${{v.hrs ? ` · ${{n0(v.hrs)}} год` : ""}}`);
+  if (otherLines.length) items.push({{ icon: "🔧", title: "Інші роботи", lines: otherLines, muted: true }});
+
+  // ── 4. Паливо
+  const petrol = new Set(DATA.petrol_machines || []);
+  let dp = 0, ben = 0; const dpBy = {{}};
+  for (const [m, ds] of Object.entries(DATA.fuel_monthly_raw || {{}}))
+    for (const [d, v] of Object.entries(ds)) if (inPeriod(d)) {{
+      if (petrol.has(m)) ben += v; else {{ dp += v; dpBy[m] = (dpBy[m]||0) + v; }}
+    }}
+  const bh = DATA.balance_history || [];
+  const balAt = d => {{ const x = bh.filter(r => r.date <= d); return x.length ? (x[x.length-1].display_dp || 0) : null; }};
+  const balNow = balAt(iso);
+  if (dp || ben) {{
+    const top = Object.entries(dpBy).sort((a,b) => b[1]-a[1]).map(([m,v]) => `${{m}} ${{n0(v)}}`).join(", ");
+    const lines = [];
+    if (dp) lines.push(`Заправлено ДП: <b>${{n0(dp)}} л</b><div class="dc-sub">${{top}}</div>`);
+    if (ben) lines.push(`Бензин: <b>${{n0(ben)}} л</b>`);
+    if (balNow != null) lines.push(`Залишок ДП${{bh.length && !(bh.filter(r=>r.date<=iso).pop()||{{}}).fact_dp ? " (теор.)" : ""}}: <b>${{n0(balNow)}} л</b>`);
+    items.push({{ icon: "⛽", title: "Паливо", lines }});
+  }}
+
+  // ── 5. Склад: видачі та відвантаження
+  const stLines = [];
+  for (const o of (H.other_issues || []).filter(o => inPeriod(o.date)))
+    stLines.push(`${{o.crop}}: ${{n0(o.kg)}} кг${{o.comment ? ` — ${{o.comment}}` : ""}}`);
+  const sent = hRecs.filter(r => inPeriod(r.date));
+  const sSun = sent.reduce((s,r)=>s+(r.sent_sun||0),0), sCorn = sent.reduce((s,r)=>s+(r.sent_corn||0),0), sWht = sent.reduce((s,r)=>s+(r.sent_wheat||0),0);
+  if (sSun) stLines.push(`На елеватор соняшник: ${{n1(sSun/1000)}} т`);
+  if (sCorn) stLines.push(`На елеватор кукурудза: ${{n1(sCorn/1000)}} т`);
+  if (sWht) stLines.push(`На елеватор пшениця: ${{n1(sWht/1000)}} т`);
+  if (stLines.length) items.push({{ icon: "📦", title: "Склад", lines: stLines }});
+
+  // ── Рендер
+  const chips = [];
+  if (kpiHarvHa) chips.push(`<span class="dc-chip">🌾 +${{n0(kpiHarvHa)}} га · ${{n1(kpiHarvT)}} т</span>`);
+  if (kpiWorkHa) chips.push(`<span class="dc-chip">🚜 ${{n0(kpiWorkHa)}} га робіт</span>`);
+  if (dp) chips.push(`<span class="dc-chip">⛽ ${{n0(dp)}} л ДП</span>`);
+  const noField = !harvLines.length && !workLines.length;
+  el.innerHTML = `
+    <div class="card-header"><span>🗓</span> Що змінилось ${{periodLabel}}</div>
+    <div class="dc-body">
+      ${{chips.length ? `<div class="dc-chips">${{chips.join("")}}</div>` : ""}}
+      ${{noField ? `<div class="dc-empty">Польових робіт і збирання не було</div>` : ""}}
+      ${{items.map(it => `
+        <div class="dc-group${{it.muted ? " muted" : ""}}">
+          <div class="dc-title">${{it.icon}} ${{it.title}}</div>
+          <ul>${{it.lines.map(l => `<li>${{l}}</li>`).join("")}}</ul>
+        </div>`).join("")}}
+    </div>`;
+}}
+
 function renderDateSection(iso) {{
+  renderDayChanges(iso);
   // ── Таблиця робіт ──────────────────────────────────────────────────────────
   const recs = (DATA.all_work_records || []).filter(r => r.date === iso);
   // Га на полі: тільки записи з технікою, без перевезення (інакше га комбайна рахуються двічі)
