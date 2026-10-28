@@ -1,13 +1,17 @@
 name: Daily Dashboard Update
 
 on:
-  # Час у UTC. Зима (UTC+2): 11:07, 12:37, 14:07 за Києвом; літо (UTC+3) — на годину пізніше.
-  # Не :00 — у цей час GitHub найчастіше відкладає/пропускає розклад.
-  # Запасні запуски безпечні: просто перезбирають звіт з тих самих файлів.
+  # Час у UTC. Зима (UTC+2): 11:07, 12:37, 14:07, 16:07, 18:07, 20:07 за Києвом;
+  # літо (UTC+3) — на годину пізніше. Не :00 — тоді GitHub найчастіше відкладає розклад.
+  # Кілька запусків = підстраховка + підхоплення файлів, закинутих пізніше.
+  # Якщо дані не змінились — сайт не перезаливається (крок «Check if changed»).
   schedule:
     - cron: '7 9 * * *'
     - cron: '37 10 * * *'
     - cron: '7 12 * * *'
+    - cron: '7 14 * * *'
+    - cron: '7 16 * * *'
+    - cron: '7 18 * * *'
   workflow_dispatch:
 
 # Не запускати два оновлення одночасно (розклад + ручний / зовнішній будильник)
@@ -91,9 +95,26 @@ jobs:
         run: |
           mkdir -p public
           cp index.html public/index.html
+          # Відбиток звіту без часу генерації: змінюється лише коли змінились дані або шаблон
+          python3 -c "import re,hashlib; h=open('index.html',encoding='utf-8').read(); h=re.sub(r'\"generated_at\": \"[^\"]*\"','',h); print(hashlib.sha256(h.encode()).hexdigest()[:16])" > public/version.txt
+          echo "version: $(cat public/version.txt)"
           ls -la public/
 
+      - name: Check if changed
+        id: chg
+        run: |
+          LIVE=$(curl -sf https://dolynske-report.netlify.app/version.txt || echo "none")
+          NEW=$(cat public/version.txt)
+          echo "live=$LIVE new=$NEW"
+          if [ "$LIVE" = "$NEW" ] && [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Без змін::Дані не змінились — сайт не перезаливався"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Deploy to Netlify
+        if: steps.chg.outputs.changed == 'true'
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
           NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
@@ -103,9 +124,12 @@ jobs:
 
       # Перевірка після деплою — якщо щось не так, запуск позначиться як failed
       - name: Verify live site
+        if: steps.chg.outputs.changed == 'true'
         run: |
           sleep 10
           URL=https://dolynske-report.netlify.app
+          LIVE=$(curl -sf "$URL/version.txt")
+          test "$LIVE" = "$(cat public/version.txt)" || { echo "На сайті не та версія: $LIVE"; exit 1; }
           curl -sf "$URL/" -o live.html
           grep -q '"crop_plan"' live.html || { echo "На сайті стара версія"; exit 1; }
           CODE=$(curl -s -o /dev/null -w "%{http_code}" "$URL/data.json")
