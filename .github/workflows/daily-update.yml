@@ -1,9 +1,19 @@
 name: Daily Dashboard Update
 
 on:
+  # Час у UTC. Зима (UTC+2): 11:07, 12:37, 14:07 за Києвом; літо (UTC+3) — на годину пізніше.
+  # Не :00 — у цей час GitHub найчастіше відкладає/пропускає розклад.
+  # Запасні запуски безпечні: просто перезбирають звіт з тих самих файлів.
   schedule:
-    - cron: '0 9 * * *'
+    - cron: '7 9 * * *'
+    - cron: '37 10 * * *'
+    - cron: '7 12 * * *'
   workflow_dispatch:
+
+# Не запускати два оновлення одночасно (розклад + ручний / зовнішній будильник)
+concurrency:
+  group: daily-dashboard
+  cancel-in-progress: false
 
 jobs:
   update:
