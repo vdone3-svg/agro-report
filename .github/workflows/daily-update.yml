@@ -139,14 +139,21 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Перевірка після деплою — якщо щось не так, запуск позначиться як failed
+      # Перевірка після деплою — якщо щось не так, запуск позначиться як failed.
+      # GitHub Pages може поширюватись до 2 хв — робимо 5 спроб по 30 сек.
       - name: Verify live site
         if: steps.chg.outputs.changed == 'true'
         run: |
-          sleep 30
           URL=https://vdone3-svg.github.io/agro-report
-          LIVE=$(curl -sf "$URL/version.txt" || echo "none")
-          test "$LIVE" = "$(cat public/version.txt)" || { echo "На сайті не та версія: $LIVE"; exit 1; }
+          NEW=$(cat public/version.txt)
+          LIVE="none"
+          for i in 1 2 3 4 5; do
+            sleep 30
+            LIVE=$(curl -sf "$URL/version.txt" || echo "none")
+            echo "Спроба $i: live=$LIVE, new=$NEW"
+            [ "$LIVE" = "$NEW" ] && break
+          done
+          test "$LIVE" = "$NEW" || { echo "На сайті не та версія після 5 спроб: $LIVE"; exit 1; }
           curl -sf "$URL/" -o live.html
           grep -q '"crop_plan"' live.html || { echo "На сайті стара версія"; exit 1; }
 
