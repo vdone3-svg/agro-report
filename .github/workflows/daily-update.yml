@@ -132,7 +132,8 @@ jobs:
           fi
           cp /tmp/index.html index.html
           cp /tmp/version.txt version.txt
-          git add index.html version.txt
+          printf 'User-agent: *\nDisallow: /\n' > robots.txt
+          git add index.html version.txt robots.txt
           git commit -m "deploy: $(date -u +'%Y-%m-%d %H:%M UTC')" || echo "no changes"
           git push origin gh-pages
         env:
