@@ -428,12 +428,28 @@ def parse_harvest(filepath: Path, field_crop_map: dict = None) -> dict:
         if not (ha or sun or corn or wht or waste or any(sent)):
             continue
 
+        # Визначаємо crop_type для рядка (буде використано в JS дашборді)
+        crop_type = None
+        if sun > 0:
+            crop_type = "sunflower"
+        elif corn > 0:
+            crop_type = "corn"
+        elif wht > 0:
+            crop_type = "wheat"
+        elif ha > 0 and field_crop_map and field:
+            # Якщо ha але без kg, визначаємо культуру за полем
+            field_key = str(field).strip().lower()
+            field_crop = field_crop_map.get(field_key)
+            if field_crop:
+                crop_type = field_crop
+
         rec = {
             "date": d.isoformat(),
             "field": str(field).strip() if field is not None else "",
             "ha": ha,
             "sunflower_kg": sun, "corn_kg": corn, "wheat_kg": wht, "waste_sun_kg": waste,
             "sent_sun": sent[0], "sent_corn": sent[1], "sent_wheat": sent[2], "sent_waste_sun": sent[3],
+            "crop_type": crop_type,  # ← НОВОЕ! Для JS дашборда
         }
         result["records"].append(rec)
 

@@ -1002,10 +1002,10 @@ function renderDateSection(iso) {{
   const cumSun  = hCum.reduce((s,r) => s + (r.sun_kg||0), 0);
   const cumCorn = hCum.reduce((s,r) => s + (r.corn_kg||0), 0);
   const cumWht  = hCum.reduce((s,r) => s + (r.wht_kg||0), 0);
-  // га по культурах (з наростаючого)
-  const cumHaSun  = hCum.filter(r => r.sun_kg > 0).reduce((s,r) => s + (r.ha||0), 0);
-  const cumHaCorn = hCum.filter(r => r.corn_kg > 0).reduce((s,r) => s + (r.ha||0), 0);
-  const cumHaWht  = hCum.filter(r => r.wht_kg > 0).reduce((s,r) => s + (r.ha||0), 0);
+  // га по культурах (з наростаючого) — використовуємо crop_type замість фільтру по kg
+  const cumHaSun  = hCum.filter(r => r.crop_type === "sunflower").reduce((s,r) => s + (r.ha||0), 0);
+  const cumHaCorn = hCum.filter(r => r.crop_type === "corn").reduce((s,r) => s + (r.ha||0), 0);
+  const cumHaWht  = hCum.filter(r => r.crop_type === "wheat").reduce((s,r) => s + (r.ha||0), 0);
 
   // Оновлюємо KPI (показуємо "за день / наростаючий")
   const kpiEl = document.getElementById("kpiRow");
