@@ -206,6 +206,7 @@ def build_html(data: dict) -> str:
                     "sent_sun": r.get("sent_sun", 0) or 0,
                     "sent_corn": r.get("sent_corn", 0) or 0,
                     "sent_wheat": r.get("sent_wheat", 0) or 0,
+                    "crop_type": r.get("crop_type"),  # ← ДОДАЄМО crop_type!
                 }
                 for r in hrecs
                 if (r.get("date") or "") >= "2026-01-01"
