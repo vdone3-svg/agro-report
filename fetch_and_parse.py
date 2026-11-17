@@ -443,11 +443,14 @@ def parse_harvest(filepath: Path, field_crop_map: dict = None) -> dict:
         if ha and not crop_ha_key and field_crop_map and field:
             field_key = str(field).strip().lower()
             field_crop = field_crop_map.get(field_key)
-            print(f"[DEBUG HARVEST] дата={d.isoformat()}, поле='{field}' → field_key='{field_key}', "
-                  f"field_crop={field_crop}, ha={ha}, sun/corn/wht={sun}/{corn}/{wht}")
+            print(f"[DEBUG HARVEST] дата={d.isoformat()}, поле='{field}' (raw={repr(field)})")
+            print(f"       → field_key='{field_key}', field_crop={repr(field_crop)}, ha={ha}")
+            print(f"       → field_crop_map={field_crop_map}")
             if field_crop:
                 crop_ha_key = f"{field_crop}_ha"
-                print(f"      → Встановлено crop_ha_key={crop_ha_key}")
+                print(f"      ✓ Встановлено crop_ha_key={crop_ha_key}")
+            else:
+                print(f"      ✗ field_crop NONE! Не встановимо crop_ha_key")
 
         if ha and crop_ha_key:
             totals[crop_ha_key] += ha
