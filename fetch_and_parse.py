@@ -443,11 +443,16 @@ def parse_harvest(filepath: Path, field_crop_map: dict = None) -> dict:
         if ha and not crop_ha_key and field_crop_map and field:
             field_key = str(field).strip().lower()
             field_crop = field_crop_map.get(field_key)
+            print(f"[DEBUG HARVEST] дата={d.isoformat()}, поле='{field}' → field_key='{field_key}', "
+                  f"field_crop={field_crop}, ha={ha}, sun/corn/wht={sun}/{corn}/{wht}")
             if field_crop:
                 crop_ha_key = f"{field_crop}_ha"
+                print(f"      → Встановлено crop_ha_key={crop_ha_key}")
 
         if ha and crop_ha_key:
             totals[crop_ha_key] += ha
+            if field and str(field).lower() == "ферма":
+                print(f"[DEBUG] Додано {ha} га до {crop_ha_key} для поля '{field}'")
 
         totals["sunflower_kg"] += sun
         totals["corn_kg"] += corn
@@ -795,9 +800,14 @@ def main():
 
     # Будуємо field-to-crop mapping з посівної для parse_harvest
     field_crop_map = {}
-    for plan_item in data.get("seeding", {}).get("plan", []):
-        field = str(plan_item.get("field", "")).strip().lower()
+    seeding_data = data.get("seeding", {})
+    seeding_plan = seeding_data.get("plan", [])
+    print(f"[DEBUG] Посівна план: {len(seeding_plan)} рядків")
+    for i, plan_item in enumerate(seeding_plan):
+        field_raw = plan_item.get("field", "")
+        field = str(field_raw).strip().lower()
         crop = plan_item.get("crop", "").strip()
+        print(f"  [{i}] field_raw='{field_raw}' → field='{field}', crop='{crop}'")
         if field and crop:
             # Нормалізуємо назву культури
             crop_key = None
@@ -809,7 +819,9 @@ def main():
                 crop_key = "wheat"
             if crop_key:
                 field_crop_map[field] = crop_key
+                print(f"      → Додано: '{field}' = {crop_key}")
 
+    print(f"[DEBUG] field_crop_map: {field_crop_map}")
     if "harvest" in files:
         data["harvest"] = parse_harvest(files["harvest"], field_crop_map)
 
