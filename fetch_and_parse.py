@@ -453,6 +453,10 @@ def parse_harvest(filepath: Path, field_crop_map: dict = None) -> dict:
         }
         result["records"].append(rec)
 
+        # Дебаг: показуємо рядки з crop_type
+        if field and str(field).lower() == "ферма" and ha > 0:
+            print(f"[DEBUG REC] Added record: date={d.isoformat()}, field={field}, ha={ha}, crop_type={crop_type}")
+
         crop_ha_key = ("sunflower_ha" if sun else "corn_ha" if corn else "wheat_ha" if wht else None)
 
         # Якщо ha > 0 але crop_ha_key = None: спробуємо визначити культуру за полем
