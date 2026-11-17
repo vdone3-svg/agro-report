@@ -371,7 +371,7 @@ def parse_worktime(filepath: Path) -> dict:
     return result
 
 
-def parse_harvest(filepath: Path) -> dict:
+def parse_harvest(filepath: Path, field_crop_map: dict = None) -> dict:
     """
     Парсить Косіння_2026.xlsx, лист '2026'.
     Колонки (1-based): 1 дата | 2 поле | 3 га | 4 соняшник кг | 5 кукурудза кг |
@@ -438,10 +438,16 @@ def parse_harvest(filepath: Path) -> dict:
         result["records"].append(rec)
 
         crop_ha_key = ("sunflower_ha" if sun else "corn_ha" if corn else "wheat_ha" if wht else None)
+
+        # Якщо ha > 0 але crop_ha_key = None: спробуємо визначити культуру за полем
+        if ha and not crop_ha_key and field_crop_map and field:
+            field_key = str(field).strip().lower()
+            field_crop = field_crop_map.get(field_key)
+            if field_crop:
+                crop_ha_key = f"{field_crop}_ha"
+
         if ha and crop_ha_key:
             totals[crop_ha_key] += ha
-        # Якщо ha > 0 але crop_ha_key = None: день скасований (робили на полі але не косили)
-        # Не рахуємо в totals — це не врожай 2026, а скасована робота
 
         totals["sunflower_kg"] += sun
         totals["corn_kg"] += corn
@@ -462,7 +468,6 @@ def parse_harvest(filepath: Path) -> dict:
         bm["waste_sun_kg"] += waste
         if ha and crop_ha_key:
             bm[crop_ha_key] += ha
-        # Скасовані дні (ha без crop) — також не рахуємо в місячні підсумки
 
     # ── Довідник полів (кол. 17 «Найменування поля», 19 «Га в обробітку») ────
     fields = []
@@ -783,10 +788,30 @@ def main():
         data["fuel"] = parse_fuel(files["fuel"])
     if "worktime" in files:
         data["worktime"] = parse_worktime(files["worktime"])
-    if "harvest" in files:
-        data["harvest"] = parse_harvest(files["harvest"])
+
+    # Парсимо посівну ПЕРЕД косінням, щоб мати field_crop_map
     if "seeding" in files:
         data["seeding"] = parse_seeding(files["seeding"])
+
+    # Будуємо field-to-crop mapping з посівної для parse_harvest
+    field_crop_map = {}
+    for plan_item in data.get("seeding", {}).get("plan", []):
+        field = str(plan_item.get("field", "")).strip().lower()
+        crop = plan_item.get("crop", "").strip()
+        if field and crop:
+            # Нормалізуємо назву культури
+            crop_key = None
+            if any(x in crop.lower() for x in ("соняш", "сонях")):
+                crop_key = "sunflower"
+            elif any(x in crop.lower() for x in ("кукур", "кніп")):
+                crop_key = "corn"
+            elif any(x in crop.lower() for x in ("пшен", "пшиц")):
+                crop_key = "wheat"
+            if crop_key:
+                field_crop_map[field] = crop_key
+
+    if "harvest" in files:
+        data["harvest"] = parse_harvest(files["harvest"], field_crop_map)
 
     # Розраховуємо л/га якщо є обидва джерела
     if "fuel" in data and "worktime" in data:
