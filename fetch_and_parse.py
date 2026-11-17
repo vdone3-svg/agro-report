@@ -440,6 +440,9 @@ def parse_harvest(filepath: Path) -> dict:
         crop_ha_key = ("sunflower_ha" if sun else "corn_ha" if corn else "wheat_ha" if wht else None)
         if ha and crop_ha_key:
             totals[crop_ha_key] += ha
+        # Якщо ha > 0 але crop_ha_key = None: день скасований (робили на полі але не косили)
+        # Не рахуємо в totals — це не врожай 2026, а скасована робота
+
         totals["sunflower_kg"] += sun
         totals["corn_kg"] += corn
         totals["wheat_kg"] += wht
@@ -459,6 +462,7 @@ def parse_harvest(filepath: Path) -> dict:
         bm["waste_sun_kg"] += waste
         if ha and crop_ha_key:
             bm[crop_ha_key] += ha
+        # Скасовані дні (ha без crop) — також не рахуємо в місячні підсумки
 
     # ── Довідник полів (кол. 17 «Найменування поля», 19 «Га в обробітку») ────
     fields = []
