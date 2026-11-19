@@ -277,6 +277,12 @@ body{{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--
 .header h1{{font-size:16px;font-weight:600;}}
 .header-date{{font-size:12px;color:var(--fg2);}}
 .theme-toggle{{background:var(--bg3);border:1px solid var(--border);color:var(--fg2);width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;}}
+.tab-nav{{display:flex;gap:4px;padding:8px 0;border-bottom:1px solid var(--border);max-width:1400px;margin:0 auto;}}
+.tab-btn{{display:flex;align-items:center;gap:6px;padding:7px 16px;border-radius:8px;border:1px solid transparent;background:transparent;color:var(--fg2);font-size:13px;font-weight:500;cursor:pointer;transition:all .15s;font-family:inherit;}}
+.tab-btn:hover{{background:var(--bg3);color:var(--fg);}}
+.tab-btn.active{{background:var(--bg2);border-color:var(--border);color:var(--fg);font-weight:600;}}
+#tab-map{{display:none;padding:12px 0;max-width:1400px;margin:0 auto;}}
+#tab-map iframe{{width:100%;height:calc(100vh - 120px);border:none;border-radius:10px;overflow:hidden;}}
 .main{{padding-block:16px;display:flex;flex-direction:column;gap:16px;max-width:1400px;margin:0 auto;}}
 .section-title{{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--fg2);margin-bottom:10px;}}
 .kpi-row{{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;}}
@@ -480,7 +486,20 @@ tr:last-child td{{border-bottom:none;}}tr:hover td{{background:var(--bg3);}}
   <div class="cal-grid" id="calDays"></div>
 </div>
 
-<div class="main">
+<!-- Вкладки -->
+<nav class="tab-nav">
+  <button class="tab-btn active" id="tabBtnReport" onclick="switchTab('report')">📊 Звіт</button>
+  <button class="tab-btn" id="tabBtnMap" onclick="switchTab('map')">🗺 Карта</button>
+</nav>
+
+<div id="tab-map">
+  <iframe src="https://vdone3-svg.github.io/dolynske-map/"
+          title="Карта ділянок — Долинське"
+          loading="lazy"
+          allow="fullscreen"></iframe>
+</div>
+
+<div class="main" id="tab-report">
 
   <div>
     <div class="card day-changes" id="dayChanges"></div>
@@ -574,6 +593,25 @@ tr:last-child td{{border-bottom:none;}}tr:hover td{{background:var(--bg3);}}
 </div>
 
 <script>
+// ─── ПЕРЕМИКАННЯ ВКЛАДОК ──────────────────────────────────────────────────────
+function switchTab(tab) {{
+  const report = document.getElementById('tab-report');
+  const map = document.getElementById('tab-map');
+  const btnReport = document.getElementById('tabBtnReport');
+  const btnMap = document.getElementById('tabBtnMap');
+  if (tab === 'map') {{
+    report.style.display = 'none';
+    map.style.display = 'block';
+    btnReport.classList.remove('active');
+    btnMap.classList.add('active');
+  }} else {{
+    map.style.display = 'none';
+    report.style.display = 'flex';
+    btnReport.classList.add('active');
+    btnMap.classList.remove('active');
+  }}
+}}
+
 // ─── ДАНІ З ПАЙПЛАЙНУ ─────────────────────────────────────────────────────────
 const DATA = {js_data};
 
